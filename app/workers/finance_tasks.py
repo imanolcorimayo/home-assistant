@@ -111,7 +111,10 @@ def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: i
         db.commit()
         logger.info("Guardado: %s %.2f %s/%s", tipo, tx.amount, tx.subcategoria1, tx.subcategoria2)
 
-    telegram_client.send_message_sync(chat_id, _format_confirmation(llm_output))
+    try:
+        telegram_client.send_message_sync(chat_id, _format_confirmation(llm_output))
+    except Exception as e:
+        logger.warning("No se pudo enviar confirmación a chat_id=%s: %s", chat_id, e)
 
 
 def _format_tx_line(t: LLMTransactionOutput) -> str:

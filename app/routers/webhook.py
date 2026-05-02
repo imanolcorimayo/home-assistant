@@ -90,14 +90,17 @@ async def _handle_command(
         await _cmd_gastos(chat_id, db)
     elif cmd == "/resumen":
         await _cmd_resumen(chat_id, db)
+    elif cmd == "/ingresos":
+        await _cmd_ingresos(chat_id, db)
     elif cmd == "/ayuda":
         await send_message(
             chat_id,
             "Comandos disponibles:\n"
-            "/resumen — balance del mes (ingresos, gastos, ahorro)\n"
-            "/gastos  — detalle de gastos variables del mes\n"
-            "/undo    — eliminar el último movimiento registrado\n"
-            "/ayuda   — esta ayuda",
+            "/resumen  — balance del mes (ingresos, gastos, ahorro)\n"
+            "/gastos   — detalle de gastos variables del mes\n"
+            "/ingresos — detalle de ingresos del mes por persona\n"
+            "/undo     — eliminar el último movimiento registrado\n"
+            "/ayuda    — esta ayuda",
         )
     else:
         await send_message(chat_id, f"Comando no reconocido: {cmd}\nUsá /ayuda para ver los disponibles.")
@@ -206,6 +209,49 @@ async def _cmd_gastos(chat_id: int, db: AsyncSession) -> None:
     lines.append(f"\n─────────────────")
     lines.append(f"Total: {grand_total:.2f} €")
     await send_message(chat_id, f"💸 Gastos {now.strftime('%B %Y')}" + "\n".join(lines))
+
+
+async def _cmd_ingresos(chat_id: int, db: AsyncSession) -> None:
+    now = datetime.now()
+    result = await db.execute(
+        text("""
+            SELECT persona, fuente, total
+            FROM v_ingresos
+            WHERE anio = :anio AND mes = :mes
+            ORDER BY total DESC
+        """),
+        {"anio": now.year, "mes": now.month},
+    )
+    rows = result.all()
+
+    if not rows:
+        await send_message(chat_id, "No hay ingresos registrados este mes.")
+        return
+
+    lines = []
+    prev_persona = None
+    subtotal = 0
+    for r in rows:
+        if r.persona != prev_persona:
+            if prev_persona:
+                lines.append(f"  Subtotal: {subtotal:.2f} €")
+            lines.append(f"\n*{r.persona}*")
+            prev_persona = r.persona
+            subtotal = 0
+        fuente = f"  {r.fuente}" if r.fuente else "  (sin fuente)"
+        lines.append(f"{fuente}: {r.total:.2f} €")
+        subtotal += float(r.total)
+    if prev_persona:
+        lines.append(f"  Subtotal: {subtotal:.2f} €")
+
+    total_result = await db.execute(
+        text("SELECT ROUND(SUM(total)::numeric,2) FROM v_ingresos WHERE anio=:anio AND mes=:mes"),
+        {"anio": now.year, "mes": now.month},
+    )
+    grand_total = total_result.scalar() or 0
+    lines.append(f"\n─────────────────")
+    lines.append(f"Total: {grand_total:.2f} €")
+    await send_message(chat_id, f"💰 Ingresos {now.strftime('%B %Y')}" + "\n".join(lines))
 
 
 async def _handle_confirmation(text: str | None, chat_id: int, user_id: str) -> None:
