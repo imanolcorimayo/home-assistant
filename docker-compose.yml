@@ -12,6 +12,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/migrations
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
 
   redis:
     image: redis:7-alpine
@@ -19,6 +24,11 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.5"
 
   ollama:
     image: ollama/ollama
@@ -28,10 +38,31 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+          cpus: "6.0"
+
+  adminer:
+    image: adminer:latest
+    container_name: sovereignbox_adminer
+    ports:
+      - "8888:8080"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.5"
 
   metabase:
     image: metabase/metabase
     container_name: sovereignbox_metabase
+    profiles:
+      - monitoring
     ports:
       - "3000:3000"
     environment:
@@ -58,10 +89,47 @@ services:
       DATABASE_URL: postgresql+asyncpg://sovereign:sovereign123@postgres:5432/sovereignbox
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
     depends_on:
       - postgres
       - redis
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+
+  worker:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: sovereignbox_worker
+    # Misma imagen que el API, distinto comando
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1
+    volumes:
+      - media_data:/app/data/files
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sovereign:sovereign123@postgres:5432/sovereignbox
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+    depends_on:
+      - postgres
+      - redis
+      - ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "3.0"
 
 volumes:
   postgres_data:
