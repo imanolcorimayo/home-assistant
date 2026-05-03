@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SovereignBox</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --surface2: #fbfbfd;
+      --border: rgba(0,0,0,0.08);
+      --text: #1d1d1f;
+      --text2: #6e6e73;
+      --text3: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --green: #30d158;
+      --yellow: #ffd60a;
+      --red: #ff453a;
+      --radius: 18px;
+      --radius-sm: 12px;
+      --shadow: 0 2px 20px rgba(0,0,0,0.06);
+      --shadow-lg: 0 8px 40px rgba(0,0,0,0.10);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* NAV */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(245,245,247,0.85);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid var(--border);
+      height: 52px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 28px;
+    }
+    .nav-brand { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; }
+    .nav-tabs { display: flex; gap: 4px; }
+    .nav-tab {
+      padding: 6px 16px; border-radius: 20px; font-size: 14px; font-weight: 500;
+      cursor: pointer; border: none; background: transparent; color: var(--text2);
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-tab:hover { background: rgba(0,0,0,0.05); color: var(--text); }
+    .nav-tab.active { background: var(--accent); color: #fff; }
+
+    /* MONTH PICKER */
+    .month-bar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 20px 28px 0;
+    }
+    .month-btn {
+      width: 32px; height: 32px; border-radius: 50%; border: none;
+      background: var(--surface); box-shadow: var(--shadow);
+      cursor: pointer; font-size: 16px; color: var(--text2);
+      display: flex; align-items: center; justify-content: center;
+      transition: box-shadow 0.15s;
+    }
+    .month-btn:hover { box-shadow: var(--shadow-lg); color: var(--accent); }
+    .month-label { font-size: 15px; font-weight: 600; min-width: 120px; text-align: center; }
+
+    /* GRID */
+    .page { display: none; padding: 20px 28px 60px; max-width: 1200px; margin: 0 auto; }
+    .page.active { display: block; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .grid-full { margin-bottom: 16px; }
+
+    @media (max-width: 768px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      nav { padding: 0 16px; }
+      .page { padding: 16px 16px 60px; }
+      .month-bar { padding: 16px 16px 0; }
+    }
+
+    /* CARD */
+    .card {
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 24px;
+      transition: box-shadow 0.2s;
+    }
+    .card:hover { box-shadow: var(--shadow-lg); }
+    .card-label {
+      font-size: 13px; font-weight: 500; color: var(--text2);
+      letter-spacing: 0.2px; margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+    .card-value {
+      font-size: 36px; font-weight: 700; letter-spacing: -1.5px; line-height: 1;
+      margin-bottom: 4px;
+    }
+    .card-sub { font-size: 13px; color: var(--text2); }
+
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .neutral  { color: var(--text); }
+
+    /* BADGE */
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 20px;
+      font-size: 12px; font-weight: 600;
+    }
+    .badge-green { background: rgba(48,209,88,0.12); color: var(--green); }
+    .badge-yellow { background: rgba(255,214,10,0.15); color: #b08800; }
+    .badge-red { background: rgba(255,69,58,0.12); color: var(--red); }
+
+    /* BUDGET BARS */
+    .budget-item { margin-bottom: 18px; }
+    .budget-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    .budget-name { font-size: 14px; font-weight: 500; }
+    .budget-amounts { font-size: 13px; color: var(--text2); }
+    .bar-track {
+      height: 6px; background: rgba(0,0,0,0.07); border-radius: 3px; overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%; border-radius: 3px;
+      transition: width 0.6s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    .bar-green  { background: var(--green); }
+    .bar-yellow { background: var(--yellow); }
+    .bar-red    { background: var(--red); }
+
+    /* CHART WRAPPER */
+    .chart-wrap { position: relative; height: 220px; }
+
+    /* TABLE */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; font-size: 12px; font-weight: 600; color: var(--text2);
+         text-transform: uppercase; letter-spacing: 0.5px; padding: 0 12px 10px; }
+    td { padding: 11px 12px; border-top: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(0,0,0,0.015); }
+
+    /* AMOUNT PILL */
+    .pill {
+      display: inline-block; padding: 3px 10px; border-radius: 20px;
+      font-size: 13px; font-weight: 600;
+    }
+    .pill-ingreso { background: rgba(48,209,88,0.1); color: #1a8c3f; }
+    .pill-gasto   { background: rgba(255,69,58,0.1); color: #c92a20; }
+
+    /* FILTERS */
+    .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .filter-input {
+      padding: 8px 14px; border: 1px solid var(--border); border-radius: 10px;
+      font-size: 14px; background: var(--surface); color: var(--text);
+      outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .filter-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,113,227,0.12); }
+    .filter-input::placeholder { color: var(--text3); }
+
+    /* PRESUPUESTO FORM */
+    .form-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
+    .form-btn {
+      padding: 9px 20px; border-radius: 10px; border: none;
+      background: var(--accent); color: #fff; font-size: 14px; font-weight: 500;
+      cursor: pointer; transition: background 0.15s, transform 0.1s;
+    }
+    .form-btn:hover { background: var(--accent-hover); }
+    .form-btn:active { transform: scale(0.97); }
+    .form-btn-del {
+      padding: 9px 14px; border-radius: 10px; border: 1px solid var(--border);
+      background: transparent; color: var(--red); font-size: 14px;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .form-btn-del:hover { background: rgba(255,69,58,0.07); }
+
+    /* EMPTY STATE */
+    .empty { text-align: center; padding: 48px 0; color: var(--text3); font-size: 15px; }
+
+    /* SPINNER */
+    .spinner {
+      width: 24px; height: 24px; border: 2px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.7s linear infinite; margin: 40px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* SECTION TITLE */
+    .section-title { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 16px; }
+
+    /* TOOLTIP-LIKE CAPTION */
+    .caption { font-size: 12px; color: var(--text3); margin-top: 8px; }
+  </style>
+</head>
+<body x-data="app()" x-init="init()">
+
+  <!-- NAV -->
+  <nav>
+    <span class="nav-brand">SovereignBox</span>
+    <div class="nav-tabs">
+      <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="tab='dashboard'">Dashboard</button>
+      <button class="nav-tab" :class="{ active: tab === 'movimientos' }" @click="tab='movimientos'; loadMovimientos()">Movimientos</button>
+      <button class="nav-tab" :class="{ active: tab === 'presupuestos' }" @click="tab='presupuestos'">Presupuestos</button>
+      <button class="nav-tab" :class="{ active: tab === 'analisis' }" @click="tab='analisis'; loadComparativa()">Análisis</button>
+    </div>
+  </nav>
+
+  <!-- MONTH PICKER -->
+  <div class="month-bar">
+    <button class="month-btn" @click="prevMonth()">‹</button>
+    <span class="month-label" x-text="monthLabel()"></span>
+    <button class="month-btn" @click="nextMonth()">›</button>
+  </div>
+
+  <!-- ========== DASHBOARD ========== -->
+  <div class="page" :class="{ active: tab === 'dashboard' }">
+
+    <!-- KPI ROW -->
+    <div class="grid-3" style="margin-top:20px">
+      <div class="card">
+        <div class="card-label">Ingresos</div>
+        <template x-if="loading"><div class="spinner" style="margin:12px auto;width:20px;height:20px;"></div></template>
+        <div class="card-value positive" x-show="!loading" x-text="fmt(balance.ingresos)"></div>
+        <div class="card-sub">este mes</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Gastos</div>
+        <div class="card-value" :class="balance.gastos > balance.ingresos ? 'negative':'neutral'" x-show="!loading" x-text="fmt(balance.gastos)"></div>
+        <div class="card-sub" x-text="balance.pct ? balance.pct.toFixed(1)+'% de los ingresos' : ''"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Balance</div>
+        <div class="card-value" :class="balance.balance >= 0 ? 'positive':'negative'" x-show="!loading" x-text="fmt(balance.balance)"></div>
+        <div class="card-sub" x-show="!loading">
+          <span class="badge" :class="balance.balance >= 0 ? 'badge-green' : 'badge-red'" x-text="balance.balance >= 0 ? 'Superávit' : 'Déficit'"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- BUDGETS -->
+    <div class="grid-full">
+      <div class="card">
+        <div class="section-title">Objetivos del mes</div>
+        <template x-if="presupuestosLoading"><div class="spinner"></div></template>
+        <template x-if="!presupuestosLoading && presupuestos.length === 0">
+          <div class="empty">Sin presupuestos configurados. Configurálos en la pestaña Presupuestos.</div>
+        </template>
+        <template x-for="p in presupuestos" :key="p.subcategoria1">
+          <div class="budget-item">
+            <div class="budget-header">
+              <span class="budget-name" x-text="p.subcategoria1"></span>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="budget-amounts" x-text="fmt(p.gastado) + ' / ' + fmt(p.limit)"></span>
+                <span class="badge"
+                  :class="p.pct >= 100 ? 'badge-red' : p.pct >= 80 ? 'badge-yellow' : 'badge-green'"
+                  x-text="p.pct.toFixed(0) + '%'"></span>
+              </div>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill"
+                :class="p.pct >= 100 ? 'bar-red' : p.pct >= 80 ? 'bar-yellow' : 'bar-green'"
+                :style="'width:'+Math.min(p.pct,100)+'%'"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- GASTOS PIE + RECENT MOVS -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="section-title">Por categoría</div>
+        <div class="chart-wrap">
+          <canvas id="pieChart"></canvas>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-title">Últimos movimientos</div>
+        <template x-if="recentLoading"><div class="spinner"></div></template>
+        <template x-if="!recentLoading && recentMovs.length === 0">
+          <div class="empty">Sin movimientos este mes</div>
+        </template>
+        <template x-for="m in recentMovs" :key="m.id">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+            <div>
+              <div style="font-size:14px;font-weight:500" x-text="m.subcategoria1 || m.categoria || '—'"></div>
+              <div style="font-size:12px;color:var(--text2)" x-text="m.transaction_date?.slice(0,10) + (m.nota ? ' · ' + m.nota : '')"></div>
+            </div>
+            <span class="pill" :class="m.tipo === 'ingreso' ? 'pill-ingreso' : 'pill-gasto'"
+              x-text="(m.tipo === 'ingreso' ? '+' : '-') + fmt(m.amount)"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== MOVIMIENTOS ========== -->
+  <div class="page" :class="{ active: tab === 'movimientos' }">
+    <div style="margin-top:20px"></div>
+    <div class="filters">
+      <input class="filter-input" placeholder="Buscar…" x-model.debounce.400ms="mSearch" @input="loadMovimientos()">
+      <select class="filter-input" x-model="mTipo" @change="loadMovimientos()">
+        <option value="">Tipo</option>
+        <option value="ingreso">Ingreso</option>
+        <option value="gasto">Gasto</option>
+      </select>
+      <select class="filter-input" x-model="mCategoria" @change="loadMovimientos()">
+        <option value="">Categoría</option>
+        <template x-for="cat in categoriasList" :key="cat">
+          <option :value="cat" x-text="cat"></option>
+        </template>
+      </select>
+      <input class="filter-input" placeholder="Subcategoría" x-model.debounce.400ms="mSub1" @input="loadMovimientos()">
+    </div>
+
+    <div class="card grid-full">
+      <template x-if="movsLoading"><div class="spinner"></div></template>
+      <template x-if="!movsLoading">
+        <div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Categoría</th>
+                  <th>Nota</th>
+                  <th>Origen</th>
+                  <th style="text-align:right">Importe</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-if="movimientos.length === 0">
+                  <tr><td colspan="5" class="empty" style="border:none">Sin resultados</td></tr>
+                </template>
+                <template x-for="m in movimientos" :key="m.id">
+                  <tr>
+                    <td x-text="m.transaction_date?.slice(0,10)"></td>
+                    <td>
+                      <div style="font-weight:500" x-text="m.subcategoria1 || '—'"></div>
+                      <div style="font-size:12px;color:var(--text2)" x-text="m.subcategoria2 || ''"></div>
+                    </td>
+                    <td style="color:var(--text2);font-size:13px" x-text="m.nota || '—'"></td>
+                    <td><span style="font-size:12px;color:var(--text3)" x-text="m.origen || ''"></span></td>
+                    <td style="text-align:right">
+                      <span class="pill" :class="m.tipo === 'ingreso' ? 'pill-ingreso' : 'pill-gasto'"
+                        x-text="(m.tipo === 'ingreso' ? '+' : '-') + fmt(m.amount)"></span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;font-size:13px;color:var(--text2)">
+            <span x-text="movsTotal + ' movimientos'"></span>
+            <div style="display:flex;gap:8px">
+              <button class="month-btn" :disabled="mOffset===0" @click="mOffset=Math.max(0,mOffset-mLimit);loadMovimientos()">‹</button>
+              <span x-text="Math.floor(mOffset/mLimit)+1 + ' / ' + Math.max(1,Math.ceil(movsTotal/mLimit))"></span>
+              <button class="month-btn" :disabled="mOffset+mLimit>=movsTotal" @click="mOffset+=mLimit;loadMovimientos()">›</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========== PRESUPUESTOS ========== -->
+  <div class="page" :class="{ active: tab === 'presupuestos' }">
+    <div style="margin-top:20px"></div>
+    <div class="card grid-full">
+      <div class="section-title">Límites mensuales por categoría</div>
+
+      <template x-if="presupuestosLoading"><div class="spinner"></div></template>
+      <template x-if="!presupuestosLoading">
+        <div>
+          <template x-if="presupuestos.length === 0">
+            <div class="empty">Sin presupuestos. Añadí uno abajo.</div>
+          </template>
+          <template x-for="p in presupuestos" :key="p.subcategoria1">
+            <div class="budget-item" style="display:flex;align-items:center;gap:12px">
+              <div style="flex:1">
+                <div class="budget-header">
+                  <span class="budget-name" x-text="p.subcategoria1"></span>
+                  <span class="budget-amounts" x-text="fmt(p.gastado) + ' / ' + fmt(p.limit)"></span>
+                </div>
+                <div class="bar-track">
+                  <div class="bar-fill"
+                    :class="p.pct >= 100 ? 'bar-red' : p.pct >= 80 ? 'bar-yellow' : 'bar-green'"
+                    :style="'width:'+Math.min(p.pct,100)+'%'"></div>
+                </div>
+              </div>
+              <button class="form-btn-del" @click="deletePresupuesto(p.subcategoria1)" title="Eliminar">✕</button>
+            </div>
+          </template>
+
+          <div class="form-row">
+            <input class="filter-input" placeholder="Categoría (ej. Supermercado)" x-model="newSub1" style="flex:1;min-width:160px">
+            <input class="filter-input" type="number" placeholder="Límite €" x-model="newLimit" style="width:120px">
+            <button class="form-btn" @click="addPresupuesto()">Guardar</button>
+          </div>
+          <div class="caption" x-show="presupuestoMsg" x-text="presupuestoMsg"></div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========== ANÁLISIS ========== -->
+  <div class="page" :class="{ active: tab === 'analisis' }">
+    <div style="margin-top:20px"></div>
+    <div class="card grid-full">
+      <div class="section-title">Comparativa anual</div>
+      <p class="caption" style="margin-bottom:16px">Ingresos y gastos mes a mes — año actual vs anterior</p>
+      <div class="chart-wrap" style="height:280px">
+        <canvas id="barChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card grid-full" style="margin-top:16px">
+      <div class="section-title">Gasto por categoría</div>
+      <template x-if="gastosLoading"><div class="spinner"></div></template>
+      <template x-if="!gastosLoading">
+        <div>
+          <template x-for="g in gastosPorCat" :key="g.subcategoria1">
+            <div class="budget-item">
+              <div class="budget-header">
+                <span class="budget-name" x-text="g.subcategoria1"></span>
+                <span class="budget-amounts" x-text="fmt(g.total)"></span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill bar-green"
+                  :style="'width:'+(gastosPorCat[0]?.total ? g.total/gastosPorCat[0].total*100 : 0)+'%'"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <script>
+  const MONTHS_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+  function app() {
+    return {
+      tab: 'dashboard',
+      anio: new Date().getFullYear(),
+      mes: new Date().getMonth() + 1,
+
+      // dashboard
+      balance: { ingresos: 0, gastos: 0, balance: 0, pct: 0 },
+      loading: true,
+      presupuestos: [],
+      presupuestosLoading: true,
+      recentMovs: [],
+      recentLoading: true,
+      gastosPorCat: [],
+      gastosLoading: true,
+
+      // movimientos
+      movimientos: [],
+      movsLoading: false,
+      movsTotal: 0,
+      mSearch: '', mTipo: '', mCategoria: '', mSub1: '',
+      mLimit: 30, mOffset: 0,
+      categoriasList: [],
+
+      // analisis
+      comparativa: [],
+
+      // presupuestos form
+      newSub1: '', newLimit: '', presupuestoMsg: '',
+
+      // chart instances
+      _pieChart: null,
+      _barChart: null,
+
+      async init() {
+        await this.loadBalance();
+        await this.loadPresupuestos();
+        this.loadRecentMovs();
+        this.loadGastosPorCat();
+        this.loadCategorias();
+      },
+
+      monthLabel() {
+        return MONTHS_ES[this.mes - 1] + ' ' + this.anio;
+      },
+
+      prevMonth() {
+        if (this.mes === 1) { this.mes = 12; this.anio--; }
+        else this.mes--;
+        this.onMonthChange();
+      },
+
+      nextMonth() {
+        if (this.mes === 12) { this.mes = 1; this.anio++; }
+        else this.mes++;
+        this.onMonthChange();
+      },
+
+      onMonthChange() {
+        this.mOffset = 0;
+        this.loadBalance();
+        this.loadPresupuestos();
+        this.loadRecentMovs();
+        this.loadGastosPorCat();
+        if (this.tab === 'movimientos') this.loadMovimientos();
+      },
+
+      fmt(n) {
+        if (n == null || isNaN(n)) return '—';
+        return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
+      },
+
+      async api(path) {
+        const res = await fetch('/api' + path);
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      },
+
+      async loadBalance() {
+        this.loading = true;
+        try {
+          this.balance = await this.api(`/balance?anio=${this.anio}&mes=${this.mes}`);
+        } catch(e) { console.error(e); }
+        this.loading = false;
+      },
+
+      async loadPresupuestos() {
+        this.presupuestosLoading = true;
+        try {
+          this.presupuestos = await this.api(`/presupuestos?anio=${this.anio}&mes=${this.mes}`);
+        } catch(e) { console.error(e); }
+        this.presupuestosLoading = false;
+      },
+
+      async loadRecentMovs() {
+        this.recentLoading = true;
+        try {
+          const data = await this.api(`/movimientos?anio=${this.anio}&mes=${this.mes}&limit=6`);
+          this.recentMovs = data.items;
+        } catch(e) { console.error(e); }
+        this.recentLoading = false;
+      },
+
+      async loadGastosPorCat() {
+        this.gastosLoading = true;
+        try {
+          this.gastosPorCat = await this.api(`/gastos-por-categoria?anio=${this.anio}&mes=${this.mes}`);
+          this.$nextTick(() => this.renderPie());
+        } catch(e) { console.error(e); }
+        this.gastosLoading = false;
+      },
+
+      async loadMovimientos() {
+        this.movsLoading = true;
+        let q = `/movimientos?anio=${this.anio}&mes=${this.mes}&limit=${this.mLimit}&offset=${this.mOffset}`;
+        if (this.mSearch) q += `&search=${encodeURIComponent(this.mSearch)}`;
+        if (this.mTipo) q += `&tipo=${this.mTipo}`;
+        if (this.mCategoria) q += `&categoria=${encodeURIComponent(this.mCategoria)}`;
+        if (this.mSub1) q += `&subcategoria1=${encodeURIComponent(this.mSub1)}`;
+        try {
+          const data = await this.api(q);
+          this.movimientos = data.items;
+          this.movsTotal = data.total;
+        } catch(e) { console.error(e); }
+        this.movsLoading = false;
+      },
+
+      async loadCategorias() {
+        try {
+          const data = await this.api('/categorias');
+          this.categoriasList = Object.keys(data);
+        } catch(e) { console.error(e); }
+      },
+
+      async loadComparativa() {
+        try {
+          this.comparativa = await this.api(`/comparativa?anio=${this.anio}`);
+          this.$nextTick(() => this.renderBar());
+        } catch(e) { console.error(e); }
+      },
+
+      async addPresupuesto() {
+        const sub1 = this.newSub1.trim();
+        const amount = parseFloat(this.newLimit);
+        if (!sub1 || !amount || amount <= 0) {
+          this.presupuestoMsg = 'Completá categoría y monto.';
+          return;
+        }
+        try {
+          const r = await fetch('/api/presupuesto', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subcategoria1: sub1, limit_amount: amount }),
+          });
+          const data = await r.json();
+          if (data.ok) {
+            this.newSub1 = ''; this.newLimit = '';
+            this.presupuestoMsg = '✓ Guardado';
+            await this.loadPresupuestos();
+          } else {
+            this.presupuestoMsg = data.error || 'Error';
+          }
+        } catch(e) { this.presupuestoMsg = 'Error de red'; }
+        setTimeout(() => this.presupuestoMsg = '', 3000);
+      },
+
+      async deletePresupuesto(sub1) {
+        try {
+          await fetch(`/api/presupuesto/${encodeURIComponent(sub1)}`, { method: 'DELETE' });
+          await this.loadPresupuestos();
+        } catch(e) { console.error(e); }
+      },
+
+      renderPie() {
+        const ctx = document.getElementById('pieChart');
+        if (!ctx) return;
+        if (this._pieChart) { this._pieChart.destroy(); this._pieChart = null; }
+        const labels = this.gastosPorCat.map(g => g.subcategoria1);
+        const values = this.gastosPorCat.map(g => g.total);
+        const colors = [
+          '#0071e3','#30d158','#ff9f0a','#ff453a','#bf5af2',
+          '#64d2ff','#ffd60a','#ff6961','#5ac8fa','#30b0c7',
+          '#34c759','#af52de','#ff9500','#ff2d55','#5e5ce6',
+        ];
+        this._pieChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels,
+            datasets: [{ data: values, backgroundColor: colors.slice(0, labels.length), borderWidth: 0, hoverOffset: 6 }],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { position: 'right', labels: { font: { size: 12 }, boxWidth: 12, padding: 12 } },
+              tooltip: {
+                callbacks: {
+                  label: ctx => {
+                    const total = values.reduce((a,b)=>a+b,0);
+                    const pct = total ? (ctx.parsed/total*100).toFixed(1) : 0;
+                    return ` ${ctx.label}: ${new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(ctx.parsed)} (${pct}%)`;
+                  }
+                }
+              }
+            },
+          },
+        });
+      },
+
+      renderBar() {
+        const ctx = document.getElementById('barChart');
+        if (!ctx) return;
+        if (this._barChart) { this._barChart.destroy(); this._barChart = null; }
+
+        const currentYear = this.anio;
+        const prevYear = this.anio - 1;
+        const meses = Array.from({length:12},(_,i)=>i+1);
+
+        function getVal(data, year, mes, field) {
+          const r = data.find(d => d.anio === year && d.mes === mes);
+          return r ? r[field] : 0;
+        }
+
+        this._barChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: MONTHS_ES.map(m => m.slice(0,3)),
+            datasets: [
+              {
+                label: `Ingresos ${currentYear}`,
+                data: meses.map(m => getVal(this.comparativa, currentYear, m, 'ingresos')),
+                backgroundColor: 'rgba(48,209,88,0.7)', borderRadius: 4,
+              },
+              {
+                label: `Gastos ${currentYear}`,
+                data: meses.map(m => getVal(this.comparativa, currentYear, m, 'gastos')),
+                backgroundColor: 'rgba(255,69,58,0.7)', borderRadius: 4,
+              },
+              {
+                label: `Gastos ${prevYear}`,
+                data: meses.map(m => getVal(this.comparativa, prevYear, m, 'gastos')),
+                backgroundColor: 'rgba(0,113,227,0.3)', borderRadius: 4,
+                borderColor: 'rgba(0,113,227,0.7)', borderWidth: 1,
+              },
+            ],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { font: { size: 12 }, boxWidth: 12 } } },
+            scales: {
+              x: { grid: { display: false }, ticks: { font: { size: 12 } } },
+              y: {
+                grid: { color: 'rgba(0,0,0,0.04)' },
+                ticks: {
+                  font: { size: 11 },
+                  callback: v => new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',notation:'compact',maximumFractionDigits:0}).format(v)
+                }
+              }
+            },
+          },
+        });
+      },
+    };
+  }
+  </script>
+</body>
+</html>
