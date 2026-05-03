@@ -20,6 +20,14 @@ async def send_message(chat_id: int, text: str) -> None:
         await client.post(f"{_BASE}/sendMessage", json={"chat_id": chat_id, "text": text})
 
 
+async def answer_callback_query(callback_query_id: str, text: str = "") -> None:
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"{_BASE}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": text},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Sync (Celery workers)
 # ---------------------------------------------------------------------------
@@ -27,6 +35,20 @@ async def send_message(chat_id: int, text: str) -> None:
 def send_message_sync(chat_id: int, text: str) -> None:
     with httpx.Client() as client:
         client.post(f"{_BASE}/sendMessage", json={"chat_id": chat_id, "text": text})
+
+
+def send_message_with_keyboard_sync(
+    chat_id: int, text: str, buttons: list[list[dict]]
+) -> None:
+    with httpx.Client() as client:
+        client.post(
+            f"{_BASE}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": {"inline_keyboard": buttons},
+            },
+        )
 
 
 def download_file_sync(file_id: str) -> bytes:

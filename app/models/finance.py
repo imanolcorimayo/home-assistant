@@ -59,3 +59,13 @@ class Transaction(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
     family_member: Mapped[FamilyMember] = relationship(back_populates="transactions")
+
+
+class MonthlyBudget(Base):
+    __tablename__ = "monthly_budgets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subcategoria1: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    limit_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)

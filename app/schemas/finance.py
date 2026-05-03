@@ -32,9 +32,21 @@ class TelegramMessage(BaseModel):
     audio: Optional[TelegramFile] = None
     model_config = {"populate_by_name": True}
 
+class TelegramCallbackMessage(BaseModel):
+    message_id: int
+    chat: TelegramChat
+
+class TelegramCallbackQuery(BaseModel):
+    id: str
+    from_user: TelegramUser = Field(alias="from")
+    message: Optional[TelegramCallbackMessage] = None
+    data: Optional[str] = None
+    model_config = {"populate_by_name": True}
+
 class TelegramUpdate(BaseModel):
     update_id: int
     message: Optional[TelegramMessage] = None
+    callback_query: Optional[TelegramCallbackQuery] = None
 
 
 # ─────────────────────────────────────────
@@ -49,7 +61,7 @@ class LLMTransactionOutput(BaseModel):
     subcategoria1: str
     subcategoria2: Optional[str] = None
     subcategoria3: Optional[str] = None  # solo para Transporte
-    nota: str
+    nota: Optional[str] = None
     transaction_date: date
     confidence: float = Field(ge=0.0, le=1.0)
 

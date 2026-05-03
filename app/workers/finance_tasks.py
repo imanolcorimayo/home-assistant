@@ -55,16 +55,21 @@ def process_text_message(self, text: str, chat_id: int, user_id: str) -> None:
     confident = [t for t in transactions if t.confidence >= 0.75]
     uncertain = [t for t in transactions if t.confidence < 0.75]
 
-    for tx in confident:
-        _save_transaction(tx, user_id, chat_id)
+    if confident:
+        saved = [_save_transaction(tx, user_id, chat_id) for tx in confident]
+        _send_bulk_confirmation(chat_id, confident, saved)
 
     if uncertain:
         wrapper = LLMTransactionListOutput(transactions=uncertain)
         _redis.setex(f"pending_tx:{chat_id}", _PENDING_TX_TTL, wrapper.model_dump_json())
         lines = [_format_tx_line(t) for t in uncertain]
-        telegram_client.send_message_sync(
+        telegram_client.send_message_with_keyboard_sync(
             chat_id,
-            "❓ No estoy seguro de estos movimientos. ¿Los guardo?\n" + "\n".join(lines) + "\nRespondé Sí/No.",
+            "❓ No estoy seguro\n\n" + "\n".join(lines),
+            buttons=[[
+                {"text": "✓ Guardar", "callback_data": "confirm"},
+                {"text": "✗ Cancelar", "callback_data": "cancel"},
+            ]],
         )
 
 
@@ -84,11 +89,11 @@ def save_pending_transaction(self, chat_id: int, user_id: str, confirmed: bool) 
         telegram_client.send_message_sync(chat_id, "❌ Ocurrió un error. Intentá de nuevo.")
         return
 
-    for tx in wrapper.transactions:
-        _save_transaction(tx, user_id, chat_id)
+    saved = [_save_transaction(tx, user_id, chat_id) for tx in wrapper.transactions]
+    _send_bulk_confirmation(chat_id, wrapper.transactions, saved)
 
 
-def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: int) -> None:
+def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: int) -> uuid.UUID:
     tipo = "ingreso" if llm_output.categoria == "Entradas" else "gasto"
 
     with SyncSessionLocal() as db:
@@ -109,10 +114,26 @@ def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: i
         )
         db.add(tx)
         db.commit()
+        tx_id = tx.id
         logger.info("Guardado: %s %.2f %s/%s", tipo, tx.amount, tx.subcategoria1, tx.subcategoria2)
 
+    return tx_id
+
+
+def _send_bulk_confirmation(
+    chat_id: int, transactions: list[LLMTransactionOutput], tx_ids: list[uuid.UUID]
+) -> None:
+    lines = [_format_confirmation(t) for t in transactions]
+    text = "\n".join(lines)
     try:
-        telegram_client.send_message_sync(chat_id, _format_confirmation(llm_output))
+        if len(transactions) == 1:
+            telegram_client.send_message_with_keyboard_sync(
+                chat_id,
+                text,
+                buttons=[[{"text": "↩️ Deshacer", "callback_data": f"undo:{tx_ids[0]}"}]],
+            )
+        else:
+            telegram_client.send_message_sync(chat_id, text)
     except Exception as e:
         logger.warning("No se pudo enviar confirmación a chat_id=%s: %s", chat_id, e)
 
