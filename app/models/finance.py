@@ -57,6 +57,65 @@ class Account(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class InstallmentPlan(Base):
+    __tablename__ = "installment_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    fecha_compra: Mapped[date] = mapped_column(Date, nullable=False)
+    descripcion: Mapped[str] = mapped_column(Text, nullable=False)
+    monto_total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    cuotas_total: Mapped[int] = mapped_column(nullable=False)
+    monto_cuota: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    categoria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    subcategoria1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    subcategoria2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    activo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
+class CardStatement(Base):
+    __tablename__ = "card_statements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    fecha_cierre: Mapped[date] = mapped_column(Date, nullable=False)
+    fecha_vencimiento: Mapped[date] = mapped_column(Date, nullable=False)
+    monto: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    cuenta_pago_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    pagado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pagado_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class RecurringCharge(Base):
+    __tablename__ = "recurring_charges"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    nombre: Mapped[str] = mapped_column(Text, nullable=False)
+    monto: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    dia_mes: Mapped[int] = mapped_column(nullable=False)
+    categoria: Mapped[str] = mapped_column(Text, nullable=False, default="Gastos variables")
+    subcategoria1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    subcategoria2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fecha_inicio: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
+    fecha_fin: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    activo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class Loan(Base):
     __tablename__ = "loans"
 
@@ -88,6 +147,15 @@ class Transaction(Base):
     )
     loan_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("loans.id"), nullable=True
+    )
+    installment_plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id"), nullable=True
+    )
+    recurring_charge_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recurring_charges.id"), nullable=True
+    )
+    card_statement_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("card_statements.id"), nullable=True
     )
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
     fecha_valor: Mapped[date] = mapped_column(Date, nullable=False)

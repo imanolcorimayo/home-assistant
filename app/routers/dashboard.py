@@ -2,7 +2,7 @@
 API REST para el dashboard web — /api/*
 """
 from calendar import monthrange
-from datetime import datetime
+from datetime import date as date_cls, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,7 +10,17 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.schemas.dashboard import CuentaUpdate, MovimientoUpdate, PrestamoIn, PrestamoUpdate, PresupuestoIn
+from app.schemas.dashboard import (
+    CuentaUpdate,
+    InstallmentPlanIn,
+    MovimientoUpdate,
+    PrestamoIn,
+    PrestamoUpdate,
+    PresupuestoIn,
+    SuscripcionIn,
+    SuscripcionUpdate,
+)
+from app.services import installment_generator
 
 router = APIRouter()
 
@@ -741,3 +751,286 @@ async def delete_prestamo(loan_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Préstamo no encontrado")
     await db.commit()
     return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Compras en cuotas
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/cuotas")
+async def get_cuotas(db: AsyncSession = Depends(get_db)):
+    """Lista planes activos con cuotas pendientes (transaction_date > hoy)."""
+    rows = (await db.execute(text("""
+        SELECT ip.id, ip.account_id, a.nombre AS account_nombre,
+               ip.fecha_compra, ip.descripcion, ip.monto_total, ip.cuotas_total,
+               ip.monto_cuota, ip.categoria, ip.subcategoria1, ip.subcategoria2,
+               ip.notas, ip.activo,
+               COALESCE(SUM(CASE WHEN t.fecha_valor <= CURRENT_DATE THEN 1 ELSE 0 END), 0) AS cuotas_pagadas,
+               COALESCE(SUM(CASE WHEN t.fecha_valor >  CURRENT_DATE THEN t.amount ELSE 0 END), 0) AS pendiente
+        FROM installment_plans ip
+        LEFT JOIN accounts a ON a.id = ip.account_id
+        LEFT JOIN transactions t
+               ON t.installment_plan_id = ip.id AND t.deleted_at IS NULL
+        WHERE ip.activo
+        GROUP BY ip.id, a.nombre
+        ORDER BY ip.fecha_compra DESC
+    """))).all()
+    return [
+        {
+            "id": str(r.id),
+            "account_id": str(r.account_id),
+            "account_nombre": r.account_nombre,
+            "fecha_compra": r.fecha_compra.isoformat(),
+            "descripcion": r.descripcion,
+            "monto_total": float(r.monto_total),
+            "cuotas_total": int(r.cuotas_total),
+            "monto_cuota": float(r.monto_cuota),
+            "categoria": r.categoria,
+            "subcategoria1": r.subcategoria1,
+            "subcategoria2": r.subcategoria2,
+            "notas": r.notas,
+            "activo": r.activo,
+            "cuotas_pagadas": int(r.cuotas_pagadas),
+            "pendiente": round(float(r.pendiente), 2),
+        }
+        for r in rows
+    ]
+
+
+@router.post("/cuota")
+async def create_cuota(payload: InstallmentPlanIn, db: AsyncSession = Depends(get_db)):
+    cuenta = (await db.execute(
+        text("SELECT tipo FROM accounts WHERE id = :id AND activa"),
+        {"id": payload.account_id},
+    )).first()
+    if not cuenta:
+        raise HTTPException(404, "Cuenta no encontrada")
+    if cuenta.tipo != "tarjeta_credito":
+        raise HTTPException(400, "Las compras en cuotas solo aplican a cuentas de tipo 'tarjeta_credito'")
+
+    monto_cuota = payload.monto_cuota or round(payload.monto_total / payload.cuotas_total, 2)
+
+    result = await db.execute(
+        text("""
+            INSERT INTO installment_plans
+                (account_id, fecha_compra, descripcion, monto_total, cuotas_total,
+                 monto_cuota, categoria, subcategoria1, subcategoria2, notas)
+            VALUES (:aid, :fc, :desc, :mt, :ct, :mc, :cat, :s1, :s2, :nt)
+            RETURNING id
+        """),
+        {
+            "aid": payload.account_id, "fc": payload.fecha_compra,
+            "desc": payload.descripcion, "mt": payload.monto_total,
+            "ct": payload.cuotas_total, "mc": monto_cuota,
+            "cat": payload.categoria, "s1": payload.subcategoria1,
+            "s2": payload.subcategoria2, "nt": payload.notas,
+        },
+    )
+    plan_id = result.scalar()
+    await db.commit()
+
+    # Expandir el plan en N transactions inmediatamente
+    created = installment_generator.expand_plan(plan_id)
+    return {"id": str(plan_id), "cuotas_generadas": len(created)}
+
+
+@router.delete("/cuota/{plan_id}")
+async def delete_cuota(plan_id: str, db: AsyncSession = Depends(get_db)):
+    """Soft-delete del plan + soft-delete de las cuotas FUTURAS (transaction_date > hoy).
+    Las cuotas pasadas se conservan porque ya impactaron tu historial.
+    """
+    result = await db.execute(
+        text("UPDATE installment_plans SET activo = false, updated_at = now() WHERE id = :id RETURNING id"),
+        {"id": plan_id},
+    )
+    if not result.first():
+        raise HTTPException(404, "Plan no encontrado")
+    await db.execute(
+        text("""
+            UPDATE transactions
+            SET deleted_at = now()
+            WHERE installment_plan_id = :id
+              AND deleted_at IS NULL
+              AND fecha_valor > CURRENT_DATE
+        """),
+        {"id": plan_id},
+    )
+    await db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Suscripciones recurrentes
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/suscripciones")
+async def get_suscripciones(db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(text("""
+        SELECT r.id, r.account_id, a.nombre AS account_nombre, r.nombre, r.monto,
+               r.dia_mes, r.categoria, r.subcategoria1, r.subcategoria2,
+               r.fecha_inicio, r.fecha_fin, r.activo
+        FROM recurring_charges r
+        LEFT JOIN accounts a ON a.id = r.account_id
+        WHERE r.activo
+        ORDER BY r.dia_mes, r.nombre
+    """))).all()
+    return [
+        {
+            "id": str(r.id),
+            "account_id": str(r.account_id),
+            "account_nombre": r.account_nombre,
+            "nombre": r.nombre,
+            "monto": float(r.monto),
+            "dia_mes": int(r.dia_mes),
+            "categoria": r.categoria,
+            "subcategoria1": r.subcategoria1,
+            "subcategoria2": r.subcategoria2,
+            "fecha_inicio": r.fecha_inicio.isoformat() if r.fecha_inicio else None,
+            "fecha_fin": r.fecha_fin.isoformat() if r.fecha_fin else None,
+            "activo": r.activo,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/suscripcion")
+async def create_suscripcion(payload: SuscripcionIn, db: AsyncSession = Depends(get_db)):
+    fields = payload.model_dump(exclude_unset=True)
+    cols = ", ".join(fields.keys())
+    vals = ", ".join(f":{k}" for k in fields.keys())
+    result = await db.execute(
+        text(f"INSERT INTO recurring_charges ({cols}) VALUES ({vals}) RETURNING id"),
+        fields,
+    )
+    new_id = result.scalar()
+    await db.commit()
+    return {"id": str(new_id)}
+
+
+@router.patch("/suscripcion/{rid}")
+async def update_suscripcion(rid: str, payload: SuscripcionUpdate, db: AsyncSession = Depends(get_db)):
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(400, "Sin cambios")
+    sets = ", ".join(f"{k} = :{k}" for k in fields)
+    fields["id"] = rid
+    result = await db.execute(
+        text(f"UPDATE recurring_charges SET {sets}, updated_at = now() WHERE id = :id RETURNING id"),
+        fields,
+    )
+    if not result.first():
+        raise HTTPException(404, "Suscripción no encontrada")
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/suscripcion/{rid}")
+async def delete_suscripcion(rid: str, db: AsyncSession = Depends(get_db)):
+    """Soft-delete: marca activo=false. Las transactions ya generadas se conservan."""
+    result = await db.execute(
+        text("UPDATE recurring_charges SET activo = false, updated_at = now() WHERE id = :id RETURNING id"),
+        {"id": rid},
+    )
+    if not result.first():
+        raise HTTPException(404, "Suscripción no encontrada")
+    await db.commit()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Tarjeta: ciclo en curso, próximo pago y resúmenes
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/tarjeta/{account_id}/resumen")
+async def get_card_summary(account_id: str, db: AsyncSession = Depends(get_db)):
+    """Resumen del ciclo abierto + próximo vencimiento + últimos resúmenes pagados."""
+    card = (await db.execute(text("""
+        SELECT id, nombre, cierre_dia, vencimiento_dia, cuenta_pago_id
+        FROM accounts
+        WHERE id = :id AND tipo = 'tarjeta_credito' AND activa
+    """), {"id": account_id})).first()
+    if not card:
+        raise HTTPException(404, "Tarjeta no encontrada")
+    if card.cierre_dia is None or card.vencimiento_dia is None:
+        raise HTTPException(400, "Tarjeta sin ciclo configurado")
+
+    today = datetime.now().date()
+    cierre_dia = card.cierre_dia
+    vto_dia    = card.vencimiento_dia
+
+    # Próximo cierre y próximo vencimiento
+    last_day_curr = monthrange(today.year, today.month)[1]
+    cierre_curr   = date_cls(today.year, today.month, min(cierre_dia, last_day_curr))
+    if cierre_curr <= today:
+        ny, nm = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+        last_day_next = monthrange(ny, nm)[1]
+        proximo_cierre = date_cls(ny, nm, min(cierre_dia, last_day_next))
+    else:
+        proximo_cierre = cierre_curr
+
+    py, pm = (proximo_cierre.year - 1, 12) if proximo_cierre.month == 1 else (proximo_cierre.year, proximo_cierre.month - 1)
+    cierre_anterior = date_cls(py, pm, min(cierre_dia, monthrange(py, pm)[1]))
+
+    # Vencimiento del próximo cierre = primer vencimiento_dia >= proximo_cierre
+    vy, vm = (proximo_cierre.year + 1, 1) if proximo_cierre.month == 12 else (proximo_cierre.year, proximo_cierre.month + 1)
+    last_day_v = monthrange(vy, vm)[1]
+    proximo_vto = date_cls(vy, vm, min(vto_dia, last_day_v))
+
+    ciclo_total = (await db.execute(text("""
+        SELECT COALESCE(SUM(
+            CASE WHEN tipo='gasto' THEN amount WHEN tipo='ingreso' THEN -amount ELSE 0 END
+        ), 0) AS monto
+        FROM transactions
+        WHERE account_id = :aid
+          AND deleted_at IS NULL
+          AND card_statement_id IS NULL
+          AND transaction_date >  :prev
+          AND transaction_date <= :curr
+    """), {"aid": account_id, "prev": cierre_anterior, "curr": proximo_cierre})).scalar()
+
+    movs = (await db.execute(text("""
+        SELECT id, transaction_date, amount, tipo, subcategoria1, subcategoria2, nota, origen
+        FROM transactions
+        WHERE account_id = :aid AND deleted_at IS NULL AND card_statement_id IS NULL
+          AND transaction_date >  :prev AND transaction_date <= :curr
+        ORDER BY transaction_date DESC
+        LIMIT 50
+    """), {"aid": account_id, "prev": cierre_anterior, "curr": proximo_cierre})).all()
+
+    historico = (await db.execute(text("""
+        SELECT id, fecha_cierre, fecha_vencimiento, monto, pagado, pagado_at
+        FROM card_statements
+        WHERE account_id = :aid
+        ORDER BY fecha_cierre DESC
+        LIMIT 12
+    """), {"aid": account_id})).all()
+
+    return {
+        "tarjeta": {"id": str(card.id), "nombre": card.nombre},
+        "ciclo_actual": {
+            "desde": cierre_anterior.isoformat(),
+            "hasta": proximo_cierre.isoformat(),
+            "total": round(float(ciclo_total or 0), 2),
+            "proximo_vto": proximo_vto.isoformat(),
+        },
+        "movimientos_ciclo": [
+            {
+                "id": str(m.id), "fecha": m.transaction_date.isoformat(),
+                "amount": float(m.amount), "tipo": m.tipo,
+                "subcategoria1": m.subcategoria1, "subcategoria2": m.subcategoria2,
+                "nota": m.nota, "origen": m.origen,
+            }
+            for m in movs
+        ],
+        "historico": [
+            {
+                "id": str(h.id),
+                "fecha_cierre": h.fecha_cierre.isoformat(),
+                "fecha_vencimiento": h.fecha_vencimiento.isoformat(),
+                "monto": float(h.monto),
+                "pagado": h.pagado,
+                "pagado_at": h.pagado_at.isoformat() if h.pagado_at else None,
+            }
+            for h in historico
+        ],
+    }

@@ -686,6 +686,109 @@
     </div>
   </div>
 
+  <!-- NUEVA CUOTA MODAL -->
+  <div class="modal-backdrop" x-show="newCuotaDlg.show" @click.self="newCuotaDlg.show = false" x-cloak>
+    <div class="modal modal-lg" x-show="newCuotaDlg.show">
+      <h3>Nueva compra en cuotas</h3>
+      <div class="modal-form">
+        <div>
+          <label>Tarjeta</label>
+          <select class="filter-input" x-model="newCuotaDlg.data.account_id">
+            <template x-for="t in tarjetas" :key="t.id">
+              <option :value="t.id" x-text="t.nombre"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label>Fecha de compra</label>
+          <input class="filter-input" type="date" x-model="newCuotaDlg.data.fecha_compra">
+        </div>
+        <div class="full">
+          <label>Descripción</label>
+          <input class="filter-input" type="text" x-model="newCuotaDlg.data.descripcion" placeholder="ej. Lavarropas">
+        </div>
+        <div>
+          <label>Monto total €</label>
+          <input class="filter-input" type="number" step="0.01" min="0.01" x-model.number="newCuotaDlg.data.monto_total">
+        </div>
+        <div>
+          <label>Cuotas</label>
+          <input class="filter-input" type="number" min="1" max="120" x-model.number="newCuotaDlg.data.cuotas_total">
+        </div>
+        <div>
+          <label>Categoría</label>
+          <select class="filter-input" x-model="newCuotaDlg.data.categoria">
+            <option value="">—</option>
+            <template x-for="cat in Object.keys(categoriasTree)" :key="cat">
+              <option :value="cat" x-text="cat"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label>Subcategoría 1</label>
+          <input class="filter-input" type="text" x-model="newCuotaDlg.data.subcategoria1">
+        </div>
+        <div class="full">
+          <label>Subcategoría 2 <span style="color:var(--ink3);font-weight:400">(opcional)</span></label>
+          <input class="filter-input" type="text" x-model="newCuotaDlg.data.subcategoria2">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="form-btn-ghost" @click="newCuotaDlg.show = false">Cancelar</button>
+        <button class="form-btn" @click="saveCuota()">Crear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NUEVA SUSCRIPCION MODAL -->
+  <div class="modal-backdrop" x-show="newSuscDlg.show" @click.self="newSuscDlg.show = false" x-cloak>
+    <div class="modal modal-lg" x-show="newSuscDlg.show">
+      <h3>Nueva suscripción</h3>
+      <div class="modal-form">
+        <div>
+          <label>Cuenta de débito</label>
+          <select class="filter-input" x-model="newSuscDlg.data.account_id">
+            <template x-for="c in cuentas.filter(c => c.tipo !== 'efectivo')" :key="c.id">
+              <option :value="c.id" x-text="c.nombre"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label>Día del mes</label>
+          <input class="filter-input" type="number" min="1" max="31" x-model.number="newSuscDlg.data.dia_mes">
+        </div>
+        <div>
+          <label>Nombre</label>
+          <input class="filter-input" type="text" x-model="newSuscDlg.data.nombre" placeholder="ej. Netflix">
+        </div>
+        <div>
+          <label>Monto €</label>
+          <input class="filter-input" type="number" step="0.01" min="0.01" x-model.number="newSuscDlg.data.monto">
+        </div>
+        <div>
+          <label>Categoría</label>
+          <select class="filter-input" x-model="newSuscDlg.data.categoria">
+            <template x-for="cat in Object.keys(categoriasTree)" :key="cat">
+              <option :value="cat" x-text="cat"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label>Subcategoría 1</label>
+          <input class="filter-input" type="text" x-model="newSuscDlg.data.subcategoria1">
+        </div>
+        <div class="full">
+          <label>Subcategoría 2 <span style="color:var(--ink3);font-weight:400">(opcional)</span></label>
+          <input class="filter-input" type="text" x-model="newSuscDlg.data.subcategoria2">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="form-btn-ghost" @click="newSuscDlg.show = false">Cancelar</button>
+        <button class="form-btn" @click="saveSusc()">Crear</button>
+      </div>
+    </div>
+  </div>
+
   <!-- EDIT PRESTAMO MODAL -->
   <div class="modal-backdrop" x-show="editPrestamoDlg.show" @click.self="closeEditPrestamo()" x-cloak>
     <div class="modal modal-lg" x-show="editPrestamoDlg.prestamo">
@@ -807,6 +910,7 @@
     <div class="nav-tabs">
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
       <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
+      <button class="nav-tab" :class="{ active: tab === 'tarjeta' }" @click="switchTab('tarjeta')">Tarjeta</button>
       <button class="nav-tab" :class="{ active: tab === 'prestamos' }" @click="switchTab('prestamos')">Préstamos</button>
       <button class="nav-tab" :class="{ active: tab === 'movimientos' }" @click="switchTab('movimientos')">Movimientos</button>
       <button class="nav-tab" :class="{ active: tab === 'presupuestos' }" @click="switchTab('presupuestos')">Presupuestos</button>
@@ -1039,6 +1143,153 @@
         </div>
       </template>
     </div>
+  </div>
+
+  <!-- ========== TARJETA ========== -->
+  <div class="page" :class="{ active: tab === 'tarjeta' }">
+    <div class="rule-label"><span>Carta di Credito</span></div>
+
+    <!-- Selector de tarjeta -->
+    <div class="month-bar" x-show="tarjetas.length > 1">
+      <span class="month-label" style="display:flex;gap:14px;align-items:center">
+        <template x-for="t in tarjetas" :key="t.id">
+          <button class="nav-tab" :class="{ active: t.id === selectedTarjetaId }" @click="selectTarjeta(t.id)" x-text="t.nombre"></button>
+        </template>
+      </span>
+    </div>
+
+    <template x-if="!cardSummary">
+      <div class="empty">Sin tarjeta seleccionada</div>
+    </template>
+
+    <template x-if="cardSummary">
+      <div>
+        <!-- KPIs -->
+        <div class="grid-3 stagger">
+          <div class="card">
+            <div class="card-label">Ciclo en curso</div>
+            <div class="card-value" :class="cardSummary.ciclo_actual.total > 0 ? 'negative' : 'neutral'" x-text="fmt(cardSummary.ciclo_actual.total)"></div>
+            <div class="card-sub" x-text="cardSummary.ciclo_actual.desde + ' → ' + cardSummary.ciclo_actual.hasta"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Próximo vto</div>
+            <div class="card-value" x-text="cardSummary.ciclo_actual.proximo_vto"></div>
+            <div class="card-sub">Día de débito</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Cuotas pendientes</div>
+            <div class="card-value" x-text="cuotasPendientes()"></div>
+            <div class="card-sub" x-text="fmt(cuotasPendientesMonto()) + ' a futuro'"></div>
+          </div>
+        </div>
+
+        <!-- Movimientos del ciclo en curso -->
+        <div class="card grid-full" style="margin-top:24px">
+          <div class="section-title">Movimientos del ciclo</div>
+          <p class="section-sub" x-text="'Compras y cargos del ciclo abierto · ' + cardSummary.movimientos_ciclo.length + ' movimientos'"></p>
+          <template x-if="cardSummary.movimientos_ciclo.length === 0">
+            <div class="empty">Sin movimientos en el ciclo en curso</div>
+          </template>
+          <template x-for="m in cardSummary.movimientos_ciclo" :key="m.id">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:13px 0;border-bottom:1px solid var(--hairline)">
+              <div>
+                <div style="font-size:13px;font-weight:500" x-text="(m.subcategoria1 || '—') + (m.subcategoria2 ? ' · ' + m.subcategoria2 : '')"></div>
+                <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace" x-text="m.fecha + (m.nota ? ' · ' + m.nota : '') + (m.origen === 'automatico' ? ' · auto' : '')"></div>
+              </div>
+              <span class="pill" :class="m.tipo === 'ingreso' ? 'pill-ingreso' : 'pill-gasto'"
+                x-text="(m.tipo === 'ingreso' ? '+' : '−') + fmt(m.amount).replace('-','').replace('−','')"></span>
+            </div>
+          </template>
+        </div>
+
+        <!-- COMPRAS EN CUOTAS -->
+        <div class="card grid-full" style="margin-top:24px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div>
+              <div class="section-title">Compras en cuotas</div>
+              <p class="section-sub" style="margin:0">Planes activos en esta tarjeta</p>
+            </div>
+            <button class="form-btn" @click="openNewCuota()">+ Nueva</button>
+          </div>
+          <template x-if="cuotasOnCard().length === 0">
+            <div class="empty">Sin compras en cuotas</div>
+          </template>
+          <template x-for="p in cuotasOnCard()" :key="p.id">
+            <div class="budget-item">
+              <div class="budget-header">
+                <span class="budget-name">
+                  <span x-text="p.descripcion"></span>
+                  <span style="color:var(--ink3);font-weight:400;font-size:11px;margin-left:8px;text-transform:uppercase;letter-spacing:0.18em" x-text="p.fecha_compra"></span>
+                </span>
+                <div style="display:flex;align-items:center;gap:14px">
+                  <span class="budget-amounts" x-text="fmt(p.monto_cuota) + '/cuota · ' + fmt(p.monto_total)"></span>
+                  <span class="badge" :class="p.cuotas_pagadas >= p.cuotas_total ? 'badge-green' : 'badge-yellow'"
+                        x-text="p.cuotas_pagadas + ' / ' + p.cuotas_total"></span>
+                  <button class="form-btn-del" @click="deleteCuota(p)" title="Eliminar">✕</button>
+                </div>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill bar-gold"
+                     :style="'width:'+(p.cuotas_total > 0 ? (p.cuotas_pagadas/p.cuotas_total*100) : 0)+'%'"></div>
+              </div>
+              <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:8px">
+                <span x-text="'Pendiente: ' + fmt(p.pendiente)"></span>
+                · <span x-text="(p.subcategoria1 || '') + (p.subcategoria2 ? ' / ' + p.subcategoria2 : '')"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- SUSCRIPCIONES -->
+        <div class="card grid-full" style="margin-top:24px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div>
+              <div class="section-title">Suscripciones</div>
+              <p class="section-sub" style="margin:0">Cargos automáticos que caen en esta tarjeta</p>
+            </div>
+            <button class="form-btn" @click="openNewSusc()">+ Nueva</button>
+          </div>
+          <template x-if="suscOnCard().length === 0">
+            <div class="empty">Sin suscripciones activas</div>
+          </template>
+          <template x-for="s in suscOnCard()" :key="s.id">
+            <div class="budget-item" style="display:flex;align-items:center;gap:14px">
+              <div style="flex:1">
+                <div class="budget-header">
+                  <span class="budget-name">
+                    <span x-text="s.nombre"></span>
+                    <span style="color:var(--ink3);font-weight:400;font-size:11px;margin-left:8px" x-text="'Día ' + s.dia_mes"></span>
+                  </span>
+                  <span class="budget-amounts" x-text="fmt(s.monto) + '/mes'"></span>
+                </div>
+                <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:6px"
+                     x-text="(s.subcategoria1 || '') + (s.subcategoria2 ? ' / ' + s.subcategoria2 : '')"></div>
+              </div>
+              <button class="form-btn-del" @click="deleteSusc(s)" title="Eliminar">✕</button>
+            </div>
+          </template>
+        </div>
+
+        <!-- HISTÓRICO -->
+        <div class="card grid-full" style="margin-top:24px" x-show="cardSummary.historico.length > 0">
+          <div class="section-title">Resúmenes pagados</div>
+          <p class="section-sub">Últimos 12 ciclos</p>
+          <template x-for="h in cardSummary.historico" :key="h.id">
+            <div class="budget-item">
+              <div class="budget-header">
+                <span class="budget-name" x-text="'Cierre ' + h.fecha_cierre"></span>
+                <div style="display:flex;align-items:center;gap:14px">
+                  <span class="budget-amounts" x-text="fmt(h.monto)"></span>
+                  <span class="badge" :class="h.pagado ? 'badge-green' : 'badge-yellow'" x-text="h.pagado ? 'Pagado' : 'Pendiente'"></span>
+                </div>
+              </div>
+              <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:6px"
+                   x-text="'Vto: ' + h.fecha_vencimiento + (h.pagado_at ? ' · debitado: ' + h.pagado_at.slice(0,10) : '')"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
   </div>
 
   <!-- ========== PRÉSTAMOS ========== -->
@@ -1362,6 +1613,14 @@
       prestamosLoading: true,
       editPrestamoDlg: { show: false, prestamo: null, original: null, isNew: false },
 
+      // Tarjeta
+      selectedTarjetaId: null,
+      cardSummary: null,
+      cuotas: [],
+      suscripciones: [],
+      newCuotaDlg: { show: false, data: {} },
+      newSuscDlg:  { show: false, data: {} },
+
       movimientos: [],
       movsLoading: false,
       movsTotal: 0,
@@ -1459,6 +1718,9 @@
         if (t === 'prestamos') {
           this.loadPrestamos();
           if (this.cuentas.length === 0) this.loadCuentas();
+        }
+        if (t === 'tarjeta') {
+          this.loadTarjeta();
         }
         if (t === 'analisis') {
           this.loadComparativa();
@@ -1785,6 +2047,117 @@
           this.showToast('Error: ' + (e.message || e), 'error');
         }
       },
+      // ───── Tarjeta ─────
+      get tarjetas() { return this.cuentas.filter(c => c.tipo === 'tarjeta_credito'); },
+      cuotasOnCard()  { return this.cuotas       .filter(p => p.account_id === this.selectedTarjetaId); },
+      suscOnCard()    { return this.suscripciones.filter(s => s.account_id === this.selectedTarjetaId); },
+      cardSelectedTarjetas() { return this.tarjetas; },
+      cuotasPendientes() {
+        return this.cuotasOnCard().reduce((a,p) => a + (p.cuotas_total - p.cuotas_pagadas), 0);
+      },
+      cuotasPendientesMonto() {
+        return this.cuotasOnCard().reduce((a,p) => a + (p.pendiente || 0), 0);
+      },
+      async loadTarjeta() {
+        if (this.cuentas.length === 0) await this.loadCuentas();
+        const tarjetas = this.tarjetas;
+        if (tarjetas.length === 0) { this.cardSummary = null; return; }
+        if (!this.selectedTarjetaId || !tarjetas.find(t => t.id === this.selectedTarjetaId)) {
+          this.selectedTarjetaId = tarjetas[0].id;
+        }
+        await Promise.all([
+          this.loadCardSummary(),
+          this.loadCuotas(),
+          this.loadSuscripciones(),
+        ]);
+      },
+      async selectTarjeta(id) {
+        this.selectedTarjetaId = id;
+        await this.loadCardSummary();
+      },
+      async loadCardSummary() {
+        if (!this.selectedTarjetaId) return;
+        try { this.cardSummary = await this.api(`/tarjeta/${this.selectedTarjetaId}/resumen`); } catch(e) { this.cardSummary = null; }
+      },
+      async loadCuotas() {
+        try { this.cuotas = await this.api(`/cuotas`); } catch(e) {}
+      },
+      async loadSuscripciones() {
+        try { this.suscripciones = await this.api(`/suscripciones`); } catch(e) {}
+      },
+      openNewCuota() {
+        this.newCuotaDlg.data = {
+          account_id: this.selectedTarjetaId || (this.tarjetas[0]?.id || ''),
+          fecha_compra: new Date().toISOString().slice(0,10),
+          descripcion: '', monto_total: 0, cuotas_total: 6,
+          categoria: 'Gastos variables', subcategoria1: '', subcategoria2: '',
+        };
+        this.newCuotaDlg.show = true;
+      },
+      async saveCuota() {
+        const d = this.newCuotaDlg.data;
+        if (!d.descripcion || !d.monto_total || !d.cuotas_total) {
+          this.showToast('Completá descripción, monto y cuotas', 'error'); return;
+        }
+        try {
+          await this.api(`/cuota`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(d),
+          });
+          this.showToast('Cuotas creadas', 'success');
+          this.newCuotaDlg.show = false;
+          await this.loadTarjeta();
+        } catch(e) {
+          this.showToast('Error: ' + (e.message || e), 'error');
+        }
+      },
+      async deleteCuota(p) {
+        const ok = await this.confirm(`¿Eliminar el plan "${p.descripcion}"? Las cuotas pasadas se conservan, las futuras se borran.`,
+                                       { title: 'Eliminar plan', okLabel: 'Eliminar' });
+        if (!ok) return;
+        try {
+          await this.api(`/cuota/${p.id}`, { method: 'DELETE' });
+          this.showToast('Plan eliminado', 'success');
+          await this.loadTarjeta();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      openNewSusc() {
+        this.newSuscDlg.data = {
+          account_id: this.selectedTarjetaId || (this.tarjetas[0]?.id || ''),
+          nombre: '', monto: 0, dia_mes: 5,
+          categoria: 'Gastos variables', subcategoria1: 'Suscripciones', subcategoria2: '',
+        };
+        this.newSuscDlg.show = true;
+      },
+      async saveSusc() {
+        const d = this.newSuscDlg.data;
+        if (!d.nombre || !d.monto || !d.dia_mes) {
+          this.showToast('Completá nombre, monto y día', 'error'); return;
+        }
+        try {
+          await this.api(`/suscripcion`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(d),
+          });
+          this.showToast('Suscripción creada', 'success');
+          this.newSuscDlg.show = false;
+          await this.loadTarjeta();
+        } catch(e) {
+          this.showToast('Error: ' + (e.message || e), 'error');
+        }
+      },
+      async deleteSusc(s) {
+        const ok = await this.confirm(`¿Eliminar suscripción "${s.nombre}"?`, { title: 'Eliminar', okLabel: 'Eliminar' });
+        if (!ok) return;
+        try {
+          await this.api(`/suscripcion/${s.id}`, { method: 'DELETE' });
+          this.showToast('Suscripción eliminada', 'success');
+          await this.loadTarjeta();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+
       async deletePrestamo(p) {
         const ok = await this.confirm(`¿Eliminar "${p.nombre}"? Las cuotas ya generadas se conservan.`, { title: 'Eliminar préstamo', okLabel: 'Eliminar' });
         if (!ok) return;

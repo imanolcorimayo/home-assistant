@@ -3,8 +3,7 @@ Tareas Celery del módulo financiero.
 """
 import uuid
 import logging
-from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date
 
 import redis
 from pydantic import ValidationError
@@ -14,7 +13,14 @@ from app.core.config import settings
 from app.core.database import SyncSessionLocal
 from app.models.finance import Transaction
 from app.schemas.finance import LLMTransactionListOutput, LLMTransactionOutput
-from app.services import loan_generator, ollama_client, telegram_client, whisper_client
+from app.services import (
+    loan_generator,
+    ollama_client,
+    recurring_generator,
+    statement_closer,
+    telegram_client,
+    whisper_client,
+)
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -85,6 +91,24 @@ def generate_loan_installments() -> int:
     return len(created)
 
 
+@celery_app.task(name="app.workers.finance_tasks.generate_recurring_charges")
+def generate_recurring_charges() -> int:
+    """Beat-scheduled: genera transactions de suscripciones recurrentes. Idempotente."""
+    created = recurring_generator.generate_due_recurring()
+    if created:
+        logger.info("Cargos recurrentes generados: %d", len(created))
+    return len(created)
+
+
+@celery_app.task(name="app.workers.finance_tasks.close_card_statements")
+def close_card_statements() -> int:
+    """Beat-scheduled: cierra y paga resúmenes de tarjeta cuyo vto sea hoy. Idempotente."""
+    created = statement_closer.close_due_statements()
+    if created:
+        logger.info("Resúmenes de tarjeta cerrados: %d", len(created))
+    return len(created)
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=5)
 def save_pending_transaction(self, chat_id: int, user_id: str, confirmed: bool) -> None:
     pending_json = _redis.get(f"pending_tx:{chat_id}")
@@ -150,28 +174,14 @@ def _resolve_account(db, user_id: str, medio_pago: str | None, cuenta_hint: str 
 
 
 def _compute_fecha_valor(transaction_date: date, cuenta: dict) -> date:
-    """Para tarjeta_credito: fecha del próximo vencimiento según ciclo cierre/vto.
-    Para otros tipos: la misma fecha de operación.
+    """fecha_valor refleja el momento contable en que la transacción afecta la cuenta.
+
+    Para todas las cuentas (incluida tarjeta de crédito), es la misma fecha de operación.
+    En tarjetas, los gastos suben deuda inmediatamente; el descuento de la cuenta corriente
+    al pagar el resumen se modela como un evento separado (card_statement) con sus propias
+    transactions vinculadas.
     """
-    if cuenta["tipo"] != "tarjeta_credito":
-        return transaction_date
-
-    cierre = cuenta["cierre_dia"] or 30
-    vto = cuenta["vencimiento_dia"] or 15
-
-    # Si se compró antes/igual al cierre del mes, el resumen cierra este mes y se paga el mes siguiente.
-    # Si se compró después del cierre, el resumen cierra el mes siguiente y se paga dos meses después.
-    if transaction_date.day <= cierre:
-        target_y, target_m = transaction_date.year, transaction_date.month + 1
-    else:
-        target_y, target_m = transaction_date.year, transaction_date.month + 2
-
-    while target_m > 12:
-        target_y += 1
-        target_m -= 12
-
-    last_day = monthrange(target_y, target_m)[1]
-    return date(target_y, target_m, min(vto, last_day))
+    return transaction_date
 
 
 def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: int) -> uuid.UUID:

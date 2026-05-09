@@ -40,6 +40,44 @@ class PrestamoIn(BaseModel):
     notas: Optional[str] = Field(default=None, max_length=500)
 
 
+class InstallmentPlanIn(BaseModel):
+    account_id: str
+    fecha_compra: date
+    descripcion: str = Field(min_length=1, max_length=120)
+    monto_total: float = Field(gt=0)
+    cuotas_total: int = Field(ge=1, le=120)
+    monto_cuota: Optional[float] = Field(default=None, gt=0)  # si no, monto_total/cuotas
+    categoria: Optional[str] = Field(default=None, max_length=80)
+    subcategoria1: Optional[str] = Field(default=None, max_length=80)
+    subcategoria2: Optional[str] = Field(default=None, max_length=80)
+    notas: Optional[str] = Field(default=None, max_length=300)
+
+
+class SuscripcionIn(BaseModel):
+    account_id: str
+    nombre: str = Field(min_length=1, max_length=80)
+    monto: float = Field(gt=0)
+    dia_mes: int = Field(ge=1, le=31)
+    categoria: Optional[str] = Field(default="Gastos variables", max_length=80)
+    subcategoria1: Optional[str] = Field(default=None, max_length=80)
+    subcategoria2: Optional[str] = Field(default=None, max_length=80)
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+
+
+class SuscripcionUpdate(BaseModel):
+    account_id: Optional[str] = None
+    nombre: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    monto: Optional[float] = Field(default=None, gt=0)
+    dia_mes: Optional[int] = Field(default=None, ge=1, le=31)
+    categoria: Optional[str] = Field(default=None, max_length=80)
+    subcategoria1: Optional[str] = Field(default=None, max_length=80)
+    subcategoria2: Optional[str] = Field(default=None, max_length=80)
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+    activo: Optional[bool] = None
+
+
 class PrestamoUpdate(BaseModel):
     nombre: Optional[str] = Field(default=None, min_length=1, max_length=80)
     cuenta_pago_id: Optional[str] = None

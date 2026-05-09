@@ -28,5 +28,13 @@ celery_app.conf.update(
             "task": "app.workers.finance_tasks.generate_loan_installments",
             "schedule": crontab(hour=6, minute=0),
         },
+        "generate-recurring-charges": {
+            "task": "app.workers.finance_tasks.generate_recurring_charges",
+            "schedule": crontab(hour=6, minute=5),
+        },
+        "close-card-statements": {
+            "task": "app.workers.finance_tasks.close_card_statements",
+            "schedule": crontab(hour=6, minute=10),
+        },
     },
 )
