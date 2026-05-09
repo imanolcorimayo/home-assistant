@@ -502,6 +502,124 @@ def schedule_due_reminders() -> int:
     return encolados
 
 
+@celery_app.task(name="app.workers.finance_tasks.schedule_weekly_summary")
+def schedule_weekly_summary() -> int:
+    """Beat-scheduled lunes 08:00: arma resumen unificado de la semana.
+
+    Incluye:
+    - Eventos de la semana (lun-dom).
+    - Tareas pendientes con due_date en la semana o ya vencidas.
+    - Tareas viejas (>30 días sin tocar) — recordatorio suave.
+    - Tasa de ahorro de la semana pasada (si hay datos).
+    """
+    from datetime import date as _date, timedelta as _td
+
+    today = _date.today()
+    inicio_semana = today  # ya es lunes
+    fin_semana    = today + _td(days=6)
+    inicio_pasada = today - _td(days=7)
+    fin_pasada    = today - _td(days=1)
+
+    encolados = 0
+    with SyncSessionLocal() as db:
+        eventos = db.execute(sa_text("""
+            SELECT titulo, fecha, hora, categoria
+            FROM events
+            WHERE deleted_at IS NULL AND fecha BETWEEN :i AND :f
+            ORDER BY fecha, hora NULLS LAST
+            LIMIT 30
+        """), {"i": inicio_semana, "f": fin_semana}).all()
+
+        tareas_due = db.execute(sa_text("""
+            SELECT title, prioridad, due_datetime
+            FROM tasks
+            WHERE deleted_at IS NULL AND task_status = 'pendiente'
+              AND (due_datetime::date <= :f OR due_datetime IS NULL)
+              AND (due_datetime IS NULL OR due_datetime::date >= :i_pasada)
+            ORDER BY
+              CASE WHEN due_datetime::date < :hoy THEN 0 ELSE 1 END,
+              CASE prioridad WHEN 'alta' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+              due_datetime NULLS LAST
+            LIMIT 15
+        """), {"f": fin_semana, "i_pasada": inicio_pasada, "hoy": today}).all()
+
+        tareas_viejas = db.execute(sa_text("""
+            SELECT title FROM tasks
+            WHERE deleted_at IS NULL AND task_status = 'pendiente'
+              AND created_at < CURRENT_DATE - INTERVAL '30 days'
+              AND (updated_at IS NULL OR updated_at < CURRENT_DATE - INTERVAL '30 days')
+            ORDER BY created_at
+            LIMIT 5
+        """)).all()
+
+        # Tasa ahorro semana pasada (suma transactions con transaction_date en rango)
+        ah = db.execute(sa_text("""
+            SELECT COALESCE(SUM(CASE WHEN tipo='ingreso' THEN amount ELSE 0 END), 0) AS ing,
+                   COALESCE(SUM(CASE WHEN tipo='gasto'   THEN amount ELSE 0 END), 0) AS gas
+            FROM transactions
+            WHERE deleted_at IS NULL AND transaction_date BETWEEN :i AND :f
+        """), {"i": inicio_pasada, "f": fin_pasada}).first()
+        ing_p = float(ah.ing) if ah else 0
+        gas_p = float(ah.gas) if ah else 0
+
+        targets = db.execute(sa_text(
+            "SELECT telegram_user_id FROM family_members WHERE telegram_user_id IS NOT NULL"
+        )).all()
+
+        icon_evt = {"medico": "🏥", "colegio": "🏫", "burocracia": "📋",
+                    "familia": "👨‍👩‍👧", "otro": "📅"}
+        icon_pri = {"alta": "🔴", "normal": "⚪", "baja": "🔵"}
+        nombres_dia = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom']
+
+        body_parts = []
+        if eventos:
+            body_parts.append("📅 Agenda de la semana:")
+            for e in eventos:
+                hora = e.hora.strftime("%H:%M") if e.hora else "—"
+                ico = icon_evt.get(e.categoria, "📅")
+                body_parts.append(f"  {nombres_dia[e.fecha.weekday()]} {hora} {ico} {e.titulo}")
+            body_parts.append("")
+
+        if tareas_due:
+            body_parts.append("📝 Tareas a atender:")
+            for t in tareas_due:
+                ico = icon_pri.get(t.prioridad, "⚪")
+                vencida = (t.due_datetime and t.due_datetime.date() < today)
+                tag = "VENCIDA" if vencida else (t.due_datetime.strftime("%d/%m") if t.due_datetime else "sin vto")
+                body_parts.append(f"  {ico} {t.title} ({tag})")
+            body_parts.append("")
+
+        if tareas_viejas:
+            body_parts.append("🕸 Pendientes de hace tiempo:")
+            for t in tareas_viejas:
+                body_parts.append(f"  · {t.title}")
+            body_parts.append("")
+
+        if ing_p > 0 or gas_p > 0:
+            ahorro = ing_p - gas_p
+            tasa = (ahorro / ing_p * 100) if ing_p > 0 else None
+            tasa_s = f"{tasa:.0f}%" if tasa is not None else "—"
+            body_parts.append("💰 Semana pasada:")
+            body_parts.append(f"  Ingresos €{ing_p:,.0f}  ·  Gastos €{gas_p:,.0f}")
+            body_parts.append(f"  Ahorro €{ahorro:,.0f}  (tasa {tasa_s})")
+
+        body = "\n".join(body_parts) if body_parts else "Semana sin pendientes ni eventos. 🌿"
+        title = "📋 Resumen semanal"
+
+        for t in targets:
+            dk = f"weekly-{today.isoformat()}-{t.telegram_user_id}"
+            res = notification_dispatcher.enqueue(
+                target_chat_id=t.telegram_user_id,
+                kind="monthly_summary",  # reusamos el kind para que el on/off del usuario aplique
+                title=title, body=body, dedupe_key=dk,
+            )
+            if res: encolados += 1
+
+    if encolados:
+        logger.info("Resumen semanal encolado para %d destinos", encolados)
+    return encolados
+
+
 @celery_app.task(name="app.workers.finance_tasks.schedule_daily_agenda")
 def schedule_daily_agenda() -> int:
     """Beat-scheduled diario 08:00: si hay eventos hoy, manda un resumen."""

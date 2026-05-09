@@ -434,6 +434,125 @@ async def get_tendencia(
     return {"subcategorias": subs_unicas, "series": serie}
 
 
+@router.get("/hoy")
+async def get_hoy(db: AsyncSession = Depends(get_db)):
+    """Vista unificada del día: eventos, tareas, compras pendientes,
+    boletas por pagar y mini-bilancio del día.
+    """
+    today = datetime.now().date()
+
+    # Eventos de hoy
+    eventos = (await db.execute(text("""
+        SELECT id, titulo, hora, categoria, ubicacion
+        FROM events
+        WHERE deleted_at IS NULL AND fecha = :d
+        ORDER BY hora NULLS LAST
+        LIMIT 20
+    """), {"d": today})).all()
+
+    # Tareas pendientes (priorizadas: alta primero, después con due hoy o vencidas)
+    tareas = (await db.execute(text("""
+        SELECT t.id, t.title, t.prioridad, t.due_datetime, fm.full_name AS asignado
+        FROM tasks t LEFT JOIN family_members fm ON fm.id = t.assigned_to
+        WHERE t.deleted_at IS NULL AND t.task_status = 'pendiente'
+        ORDER BY
+          CASE WHEN t.due_datetime::date < :d THEN 0     -- vencidas primero
+               WHEN t.due_datetime::date = :d THEN 1     -- de hoy
+               ELSE 2 END,
+          CASE t.prioridad WHEN 'alta' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+          t.due_datetime NULLS LAST,
+          t.created_at DESC
+        LIMIT 8
+    """), {"d": today})).all()
+
+    # Compras pendientes (top 5)
+    compras = (await db.execute(text("""
+        SELECT id, texto, cantidad, unidad
+        FROM shopping_list_items
+        WHERE completed_at IS NULL
+        ORDER BY created_at
+        LIMIT 5
+    """))).all()
+    compras_total = (await db.execute(text(
+        "SELECT COUNT(*) AS n FROM shopping_list_items WHERE completed_at IS NULL"
+    ))).scalar()
+
+    # Boletas pendientes (vto en próximos 7 días)
+    pendientes_pago = (await db.execute(text("""
+        SELECT id, fecha_valor, amount, subcategoria1, subcategoria2
+        FROM transactions
+        WHERE deleted_at IS NULL AND estado_pago = 'pendiente'
+          AND (fecha_valor IS NULL OR fecha_valor <= :horizon)
+        ORDER BY fecha_valor NULLS LAST
+        LIMIT 5
+    """), {"horizon": today + timedelta(days=7)})).all()
+
+    # Mini-bilancio del día
+    bal_dia = (await db.execute(text("""
+        SELECT
+            COALESCE(SUM(CASE WHEN tipo='ingreso' THEN amount ELSE 0 END), 0) AS ingresos,
+            COALESCE(SUM(CASE WHEN tipo='gasto'   THEN amount ELSE 0 END), 0) AS gastos
+        FROM transactions
+        WHERE deleted_at IS NULL AND transaction_date = :d
+    """), {"d": today})).first()
+
+    icon_evt = {"medico": "🏥", "colegio": "🏫", "burocracia": "📋",
+                "familia": "👨‍👩‍👧", "otro": "📅"}
+    icon_pri = {"alta": "🔴", "normal": "⚪", "baja": "🔵"}
+
+    return {
+        "fecha": today.isoformat(),
+        "eventos": [
+            {
+                "id":        str(e.id),
+                "titulo":    e.titulo,
+                "hora":      e.hora.strftime("%H:%M") if e.hora else None,
+                "categoria": e.categoria,
+                "icono":     icon_evt.get(e.categoria, "📅"),
+                "ubicacion": e.ubicacion,
+            } for e in eventos
+        ],
+        "tareas": [
+            {
+                "id":            str(t.id),
+                "title":         t.title,
+                "prioridad":     t.prioridad,
+                "icono":         icon_pri.get(t.prioridad, "⚪"),
+                "due_datetime":  t.due_datetime.isoformat() if t.due_datetime else None,
+                "asignado":      t.asignado,
+                "vencida":       bool(t.due_datetime and t.due_datetime.date() < today),
+            } for t in tareas
+        ],
+        "compras": {
+            "total":    int(compras_total or 0),
+            "items":    [
+                {
+                    "id": str(c.id), "texto": c.texto,
+                    "cantidad": float(c.cantidad) if c.cantidad else None,
+                    "unidad":   c.unidad,
+                } for c in compras
+            ],
+        },
+        "pendientes_pago": {
+            "cantidad": len(pendientes_pago),
+            "items": [
+                {
+                    "id":            str(p.id),
+                    "fecha_valor":   p.fecha_valor.isoformat() if p.fecha_valor else None,
+                    "amount":        float(p.amount),
+                    "subcategoria1": p.subcategoria1,
+                    "subcategoria2": p.subcategoria2,
+                } for p in pendientes_pago
+            ],
+        },
+        "bilancio_dia": {
+            "ingresos": float(bal_dia.ingresos) if bal_dia else 0,
+            "gastos":   float(bal_dia.gastos)   if bal_dia else 0,
+            "balance":  (float(bal_dia.ingresos) - float(bal_dia.gastos)) if bal_dia else 0,
+        },
+    }
+
+
 @router.get("/salud-financiera")
 async def get_salud_financiera(db: AsyncSession = Depends(get_db)):
     """Métricas de salud financiera: tasa de ahorro mensual y YTD, runway,

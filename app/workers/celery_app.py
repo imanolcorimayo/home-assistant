@@ -58,6 +58,11 @@ celery_app.conf.update(
             "task": "app.workers.finance_tasks.schedule_daily_agenda",
             "schedule": crontab(hour=8, minute=0),
         },
+        # Lunes 08:00 — resumen semanal con agenda + tareas + tasa ahorro semana
+        "schedule-weekly-summary": {
+            "task": "app.workers.finance_tasks.schedule_weekly_summary",
+            "schedule": crontab(day_of_week=1, hour=8, minute=0),
+        },
     },
 )
 

@@ -1078,6 +1078,7 @@
   <nav>
     <span class="nav-brand">SovereignBox<span class="dot"></span></span>
     <div class="nav-tabs">
+      <button class="nav-tab" :class="{ active: tab === 'hoy' }" @click="switchTab('hoy')">Hoy</button>
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
       <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
       <button class="nav-tab" :class="{ active: tab === 'agenda' }" @click="switchTab('agenda')">Agenda</button>
@@ -1100,6 +1101,105 @@
       <span class="year" x-text="monthLabel().anio"></span>
     </span>
     <button class="month-btn" @click="nextMonth()">›</button>
+  </div>
+
+  <!-- ========== HOY (Vista unificada del día) ========== -->
+  <div class="page" :class="{ active: tab === 'hoy' }">
+    <div class="rule-label"><span>Oggi</span></div>
+
+    <template x-if="!hoy">
+      <div class="empty">Cargando…</div>
+    </template>
+
+    <template x-if="hoy">
+      <div>
+        <!-- Hero: fecha grande + saldo del día -->
+        <div class="grid-3 stagger">
+          <div class="card" style="grid-column: 1 / -1">
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px">
+              <div>
+                <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.24em;font-weight:600" x-text="fmtFechaLarga(hoy.fecha)"></div>
+                <div style="font-size:48px;font-weight:300;font-family:'Fraunces',Georgia,serif;color:var(--ink-bright);letter-spacing:-0.04em" x-text="resumenDelDia()"></div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.18em">Balance del día</div>
+                <div style="font-size:24px;font-weight:300;font-family:'Fraunces',Georgia,serif"
+                     :class="hoy.bilancio_dia.balance >= 0 ? 'positive' : 'negative'"
+                     x-text="fmt(hoy.bilancio_dia.balance)"></div>
+                <div style="font-size:10px;color:var(--ink3);font-family:'JetBrains Mono',monospace"
+                     x-text="'+' + fmt(hoy.bilancio_dia.ingresos) + ' / −' + fmt(hoy.bilancio_dia.gastos).replace('-','').replace('−','')"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2 columnas: agenda hoy / tareas + compras + pendientes -->
+        <div class="grid-2 stagger" style="margin-top:24px">
+          <!-- Agenda hoy -->
+          <div class="card">
+            <div class="section-title" x-text="'📅 Agenda hoy (' + hoy.eventos.length + ')'"></div>
+            <template x-if="hoy.eventos.length === 0">
+              <div class="empty" style="padding:24px 0">Sin eventos hoy</div>
+            </template>
+            <template x-for="e in hoy.eventos" :key="e.id">
+              <div style="display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--hairline)">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink-bright);width:60px;flex-shrink:0" x-text="e.hora || '—'"></div>
+                <div style="flex:1">
+                  <div style="font-size:14px;font-weight:500;color:var(--ink-bright)" x-text="e.icono + ' ' + e.titulo"></div>
+                  <div x-show="e.ubicacion" style="font-size:11px;color:var(--ink3)" x-text="e.ubicacion"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Tareas + compras + pendientes -->
+          <div>
+            <!-- Tareas urgentes -->
+            <div class="card">
+              <div class="section-title" x-text="'📝 Tareas (' + hoy.tareas.length + ')'"></div>
+              <template x-if="hoy.tareas.length === 0">
+                <div class="empty" style="padding:24px 0">Sin pendientes 🌿</div>
+              </template>
+              <template x-for="t in hoy.tareas" :key="t.id">
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--hairline)">
+                  <button @click="markTareaDoneFromHoy(t)" title="Completar"
+                          style="background:transparent;border:1px solid var(--hairline-strong);width:20px;height:20px;border-radius:50%;cursor:pointer;flex-shrink:0"></button>
+                  <div style="flex:1;font-size:13px" x-text="t.icono + ' ' + t.title"></div>
+                  <span x-show="t.vencida" style="font-size:9px;color:#c26648;text-transform:uppercase;letter-spacing:0.18em">Vencida</span>
+                </div>
+              </template>
+            </div>
+
+            <!-- Compras pendientes -->
+            <div class="card" style="margin-top:14px" x-show="hoy.compras.total > 0">
+              <div style="display:flex;justify-content:space-between;align-items:flex-end">
+                <div class="section-title" x-text="'🛒 Compras (' + hoy.compras.total + ')'"></div>
+                <a class="row-btn" @click="switchTab('compras')" style="cursor:pointer">→</a>
+              </div>
+              <template x-for="c in hoy.compras.items" :key="c.id">
+                <div style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--hairline)">
+                  <span x-text="'• ' + c.texto + (c.cantidad ? ' — ' + c.cantidad + (c.unidad || '') : '')"></span>
+                </div>
+              </template>
+            </div>
+
+            <!-- Pendientes de pago -->
+            <div class="card" style="margin-top:14px" x-show="hoy.pendientes_pago.cantidad > 0">
+              <div style="display:flex;justify-content:space-between;align-items:flex-end">
+                <div class="section-title" x-text="'💸 Boletas por pagar (' + hoy.pendientes_pago.cantidad + ')'"></div>
+                <a class="row-btn" @click="switchTab('pendientes')" style="cursor:pointer">→</a>
+              </div>
+              <template x-for="p in hoy.pendientes_pago.items" :key="p.id">
+                <div style="display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px solid var(--hairline)">
+                  <span x-text="(p.subcategoria1 || '—') + (p.subcategoria2 ? ' / ' + p.subcategoria2 : '')"></span>
+                  <span class="pill pill-gasto" x-text="fmt(p.amount) + (p.fecha_valor ? ' · ' + p.fecha_valor.slice(5) : '')"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 
   <!-- ========== DASHBOARD (Il Bilancio) ========== -->
@@ -2080,7 +2180,7 @@
 
   function app() {
     return {
-      tab: 'dashboard',
+      tab: 'hoy',
       anio: new Date().getFullYear(),
       mes: new Date().getMonth() + 1,
 
@@ -2113,6 +2213,9 @@
 
       // Drill-down de categoría
       catDetail: { show: false, data: null },
+
+      // Hoy
+      hoy: null,
 
       // Agenda
       eventos: [],
@@ -2217,6 +2320,7 @@
         this.loadSalud();
         this.loadDistribucion();
         this.loadPendientes();
+        this.loadHoy();
       },
 
       monthLabel() {
@@ -2234,6 +2338,9 @@
 
       switchTab(t) {
         this.tab = t;
+        if (t === 'hoy') {
+          this.loadHoy();
+        }
         if (t === 'movimientos') this.loadMovimientos();
         if (t === 'cuentas') {
           this.loadCuentas();
@@ -2278,6 +2385,30 @@
       async loadSalud() {
         try { this.salud = await this.api(`/salud-financiera`); } catch(e) {}
       },
+      // ───── Hoy ─────
+      async loadHoy() {
+        try { this.hoy = await this.api(`/hoy`); } catch(e) { this.hoy = null; }
+      },
+      resumenDelDia() {
+        if (!this.hoy) return '';
+        const partes = [];
+        const ne = this.hoy.eventos.length;
+        const nt = this.hoy.tareas.length;
+        const nc = this.hoy.compras.total;
+        const np = this.hoy.pendientes_pago.cantidad;
+        if (ne)  partes.push(`${ne} evento${ne!==1?'s':''}`);
+        if (nt)  partes.push(`${nt} tarea${nt!==1?'s':''}`);
+        if (np)  partes.push(`${np} por pagar`);
+        if (nc)  partes.push(`${nc} en lista`);
+        return partes.length ? partes.join(' · ') : 'Sin pendientes hoy';
+      },
+      async markTareaDoneFromHoy(t) {
+        try {
+          await this.api(`/tarea/${t.id}/done`, { method: 'PATCH' });
+          await this.loadHoy();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+
       // ───── Tareas ─────
       tareasByPrioridad(p) {
         return this.tareas.filter(t => t.prioridad === p);
