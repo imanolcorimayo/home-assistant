@@ -687,6 +687,67 @@
     </div>
   </div>
 
+  <!-- ATTACHMENTS MODAL -->
+  <div class="modal-backdrop" x-show="attDlg.show" @click.self="attDlg.show = false" x-cloak>
+    <div class="modal modal-lg" x-show="attDlg.show">
+      <h3 x-text="'Archivos · ' + (attDlg.title || '')"></h3>
+      <div style="margin-bottom:14px">
+        <input type="file" id="attDlgFile" style="display:none" accept="image/*,application/pdf"
+               @change="uploadParaEntidad($event)">
+        <label for="attDlgFile" class="form-btn" style="cursor:pointer">+ Subir archivo</label>
+        <select class="filter-input" x-model="attDlg.role" style="display:inline-block;width:auto;margin-left:8px">
+          <option value="boleta">Boleta</option>
+          <option value="comprobante">Comprobante de pago</option>
+          <option value="foto">Foto</option>
+          <option value="documento">Documento</option>
+          <option value="otro">Otro</option>
+        </select>
+      </div>
+      <template x-if="attDlg.items.length === 0">
+        <div class="empty">Sin archivos</div>
+      </template>
+      <template x-for="a in attDlg.items" :key="a.id">
+        <div class="budget-item">
+          <div class="budget-header">
+            <span class="budget-name">
+              <span x-text="a.original_name"></span>
+              <span style="color:var(--ink3);font-weight:400;font-size:11px;margin-left:8px;text-transform:uppercase;letter-spacing:0.18em" x-text="a.role || 'archivo'"></span>
+            </span>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="color:var(--ink3);font-size:11px" x-text="(a.size_bytes/1024).toFixed(0) + ' KB'"></span>
+              <a class="row-btn" :href="'/api/attachments/'+a.id+'/file'" target="_blank" title="Ver">👁</a>
+              <button class="row-btn" @click="sugerirArchivo(a.id)" title="¿Dónde guardo?">📁</button>
+              <button class="row-btn danger" @click="eliminarAttachmentDlg(a.id)" title="Borrar">✕</button>
+            </div>
+          </div>
+        </div>
+      </template>
+      <div class="modal-actions">
+        <button class="form-btn-ghost" @click="attDlg.show = false">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUGERENCIA DE ARCHIVO MODAL -->
+  <div class="modal-backdrop" x-show="filingDlg.show" @click.self="filingDlg.show = false" x-cloak>
+    <div class="modal" x-show="filingDlg.show">
+      <h3>¿Dónde guardo este papel?</h3>
+      <template x-if="filingDlg.loading"><div class="spinner" style="margin:24px auto"></div></template>
+      <template x-if="!filingDlg.loading && filingDlg.suggestion">
+        <div style="padding:14px 0">
+          <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.18em;margin-bottom:8px">Sugerencia</div>
+          <div style="font-size:24px;font-weight:300;color:var(--ink-bright);font-family:'Fraunces',Georgia,serif"
+               x-text="filingDlg.suggestion.ruta"></div>
+          <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:14px"
+               x-text="filingDlg.suggestion.razon"></div>
+        </div>
+      </template>
+      <div class="modal-actions">
+        <button class="form-btn" @click="filingDlg.show = false">Entendido</button>
+      </div>
+    </div>
+  </div>
+
   <!-- DRILL-DOWN CATEGORIA MODAL -->
   <div class="modal-backdrop" x-show="catDetail.show" @click.self="catDetail.show = false" x-cloak>
     <div class="modal modal-lg" x-show="catDetail.data">
@@ -969,6 +1030,7 @@
     <div class="nav-tabs">
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
       <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
+      <button class="nav-tab" :class="{ active: tab === 'pendientes' }" @click="switchTab('pendientes')">Pendientes</button>
       <button class="nav-tab" :class="{ active: tab === 'tarjeta' }" @click="switchTab('tarjeta')">Tarjeta</button>
       <button class="nav-tab" :class="{ active: tab === 'prestamos' }" @click="switchTab('prestamos')">Préstamos</button>
       <button class="nav-tab" :class="{ active: tab === 'movimientos' }" @click="switchTab('movimientos')">Movimientos</button>
@@ -1032,6 +1094,20 @@
         <div class="card-label">Patrimonio neto</div>
         <div class="card-value" :class="patrimonio.patrimonio_neto >= 0 ? 'positive' : 'negative'" x-text="fmt(patrimonio.patrimonio_neto)"></div>
         <div class="card-sub">Activos − pasivos</div>
+      </div>
+    </div>
+
+    <!-- PENDIENTES DE PAGO -->
+    <div class="grid-3 stagger" x-show="pendientes && pendientes.cantidad > 0">
+      <div class="card" style="grid-column: 1 / -1; cursor:pointer" @click="switchTab('pendientes')">
+        <div class="card-label">Pendientes de pago</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:8px">
+          <div class="card-value" style="font-size:36px" :class="pendientes.total > 0 ? 'negative' : 'neutral'" x-text="fmt(pendientes.total)"></div>
+          <div style="text-align:right">
+            <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.18em">Boletas sin pagar</div>
+            <div style="font-size:28px;font-weight:300;font-family:'Fraunces',Georgia,serif" x-text="pendientes.cantidad + (pendientes.cantidad === 1 ? ' boleta' : ' boletas')"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1250,6 +1326,81 @@
               </div>
             </div>
           </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========== PENDIENTES DE PAGO ========== -->
+  <div class="page" :class="{ active: tab === 'pendientes' }">
+    <div class="rule-label"><span>Boletas Pendienti</span></div>
+
+    <!-- Resumen + acción de subir nueva boleta -->
+    <div class="grid-2 stagger">
+      <div class="card">
+        <div class="card-label">Pendientes</div>
+        <div class="card-value" :class="pendientes?.total > 0 ? 'negative' : 'neutral'" x-text="fmt(pendientes?.total ?? 0)"></div>
+        <div class="card-sub" x-text="(pendientes?.cantidad ?? 0) + ' boleta(s) sin pagar'"></div>
+      </div>
+      <div class="card" style="display:flex;flex-direction:column;justify-content:center;align-items:center;gap:14px">
+        <div class="section-title" style="margin:0">Subir boleta</div>
+        <p class="section-sub" style="margin:0;text-align:center">Foto o PDF — se asocia al movimiento que crees después</p>
+        <input type="file" id="huerfanoFile" style="display:none" accept="image/*,application/pdf" @change="uploadHuerfano($event)">
+        <label for="huerfanoFile" class="form-btn" style="cursor:pointer">+ Subir archivo</label>
+      </div>
+    </div>
+
+    <!-- Lista de pendientes -->
+    <div class="card grid-full" style="margin-top:24px">
+      <div class="section-title">Movimientos pendientes</div>
+      <p class="section-sub">Cargados con boleta — marca pagado cuando los abones</p>
+      <template x-if="!pendientes || pendientes.items.length === 0">
+        <div class="empty">Sin pendientes</div>
+      </template>
+      <template x-for="m in (pendientes?.items || [])" :key="m.id">
+        <div class="budget-item">
+          <div class="budget-header">
+            <span class="budget-name">
+              <span x-text="(m.subcategoria1 || '—') + (m.subcategoria2 ? ' / ' + m.subcategoria2 : '')"></span>
+              <span style="color:var(--ink3);font-weight:400;font-size:11px;margin-left:8px;text-transform:uppercase;letter-spacing:0.18em" x-text="'Vto ' + (m.fecha_valor || m.fecha)"></span>
+            </span>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="pill pill-gasto" x-text="fmt(m.amount)"></span>
+              <button class="form-btn" @click="marcarPagado(m)" title="Marcar como pagado">✓ Pagar</button>
+              <button class="row-btn" @click="abrirAttachments('transaction', m.id, m.subcategoria1)" title="Ver archivos">📎</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:6px">
+            <span x-text="m.cuenta_nombre || ''"></span>
+            <template x-if="m.nota"><span> · <span x-text="m.nota"></span></span></template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Huérfanos (subidos sin asociar) -->
+    <div class="card grid-full" style="margin-top:24px">
+      <div class="section-title">Archivos sin asociar</div>
+      <p class="section-sub">Sub recibidos por Telegram o web sin movimiento vinculado</p>
+      <template x-if="huerfanos.length === 0">
+        <div class="empty">Sin archivos huérfanos</div>
+      </template>
+      <template x-for="a in huerfanos" :key="a.id">
+        <div class="budget-item">
+          <div class="budget-header">
+            <span class="budget-name" x-text="a.original_name"></span>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="color:var(--ink3);font-size:11px" x-text="(a.size_bytes/1024).toFixed(0) + ' KB'"></span>
+              <a class="row-btn" :href="'/api/attachments/'+a.id+'/file'" target="_blank" title="Ver">👁</a>
+              <button class="row-btn" @click="sugerirArchivo(a.id)" title="¿Dónde guardo este papel?">📁</button>
+              <button class="row-btn danger" @click="eliminarAttachment(a.id)" title="Borrar">✕</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:6px">
+            <span x-text="a.uploaded_via"></span>
+            · <span x-text="a.created_at?.slice(0,16).replace('T',' ')"></span>
+            <template x-if="a.notas"><span> · <span x-text="a.notas"></span></span></template>
+          </div>
         </div>
       </template>
     </div>
@@ -1527,6 +1678,7 @@
                     <td>
                       <div class="row-actions">
                         <button class="row-btn" title="Editar" @click="openEdit(m)">✎</button>
+                        <button class="row-btn" title="Archivos" @click="abrirAttachments('transaction', m.id, m.subcategoria1)">📎</button>
                         <button class="row-btn danger" title="Eliminar" @click="deleteMov(m)">✕</button>
                       </div>
                     </td>
@@ -1742,6 +1894,12 @@
       // Drill-down de categoría
       catDetail: { show: false, data: null },
 
+      // Pendientes de pago + attachments
+      pendientes: null,
+      huerfanos: [],
+      attDlg:    { show: false, entity_type: null, entity_id: null, title: '', items: [], role: 'comprobante' },
+      filingDlg: { show: false, loading: false, suggestion: null },
+
       // Tarjeta
       selectedTarjetaId: null,
       cardSummary: null,
@@ -1824,6 +1982,7 @@
         this.loadPatrimonio();
         this.loadSalud();
         this.loadDistribucion();
+        this.loadPendientes();
       },
 
       monthLabel() {
@@ -1853,6 +2012,10 @@
         if (t === 'tarjeta') {
           this.loadTarjeta();
         }
+        if (t === 'pendientes') {
+          this.loadPendientes();
+          this.loadHuerfanos();
+        }
         if (t === 'analisis') {
           this.loadComparativa();
           this.loadTendencia();
@@ -1872,6 +2035,94 @@
       async loadSalud() {
         try { this.salud = await this.api(`/salud-financiera`); } catch(e) {}
       },
+      async loadPendientes() {
+        try { this.pendientes = await this.api(`/pendientes`); } catch(e) {}
+      },
+      async loadHuerfanos() {
+        try { this.huerfanos = await this.api(`/attachments?huerfanos=true`); } catch(e) {}
+      },
+      async marcarPagado(m) {
+        const ok = await this.confirm(`¿Marcar como pagado "${m.subcategoria1 || ''}" por ${this.fmt(m.amount)}?`,
+                                       { title: 'Marcar pagado', okLabel: 'Pagar' });
+        if (!ok) return;
+        try {
+          await this.api(`/pendientes/${m.id}/marcar-pagado`, { method: 'POST' });
+          this.showToast('Movimiento pagado', 'success');
+          await this.loadPendientes();
+          await this.loadInsights();
+          await this.abrirAttachments('transaction', m.id, m.subcategoria1, 'comprobante');
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async abrirAttachments(entity_type, entity_id, label, defaultRole = 'comprobante') {
+        this.attDlg.entity_type = entity_type;
+        this.attDlg.entity_id   = entity_id;
+        this.attDlg.title       = label || entity_type;
+        this.attDlg.role        = defaultRole;
+        this.attDlg.items       = [];
+        this.attDlg.show        = true;
+        try {
+          this.attDlg.items = await this.api(`/attachments?entity_type=${entity_type}&entity_id=${entity_id}`);
+        } catch(e) {}
+      },
+      async uploadParaEntidad(ev) {
+        const file = ev.target.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('entity_type', this.attDlg.entity_type);
+        fd.append('entity_id',   this.attDlg.entity_id);
+        fd.append('role',        this.attDlg.role);
+        try {
+          const res = await fetch('/api/attachments', { method: 'POST', body: fd });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          this.showToast('Archivo subido', 'success');
+          this.attDlg.items = await this.api(`/attachments?entity_type=${this.attDlg.entity_type}&entity_id=${this.attDlg.entity_id}`);
+          ev.target.value = '';
+        } catch(e) { this.showToast('Error subiendo: ' + e.message, 'error'); }
+      },
+      async uploadHuerfano(ev) {
+        const file = ev.target.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('role', 'boleta');
+        try {
+          const res = await fetch('/api/attachments', { method: 'POST', body: fd });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          this.showToast('Archivo subido como huérfano', 'success');
+          await this.loadHuerfanos();
+          ev.target.value = '';
+        } catch(e) { this.showToast('Error: ' + e.message, 'error'); }
+      },
+      async sugerirArchivo(att_id) {
+        this.filingDlg.loading    = true;
+        this.filingDlg.suggestion = null;
+        this.filingDlg.show       = true;
+        try {
+          this.filingDlg.suggestion = await this.api(`/attachments/${att_id}/sugerir-archivo`, { method: 'POST' });
+        } catch(e) {
+          this.filingDlg.suggestion = { ruta: 'No disponible', razon: e.message || '' };
+        } finally {
+          this.filingDlg.loading = false;
+        }
+      },
+      async eliminarAttachment(att_id) {
+        const ok = await this.confirm('¿Eliminar este archivo?', { title: 'Eliminar', okLabel: 'Eliminar' });
+        if (!ok) return;
+        try {
+          await this.api(`/attachments/${att_id}`, { method: 'DELETE' });
+          await this.loadHuerfanos();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async eliminarAttachmentDlg(att_id) {
+        const ok = await this.confirm('¿Eliminar este archivo?', { title: 'Eliminar', okLabel: 'Eliminar' });
+        if (!ok) return;
+        try {
+          await this.api(`/attachments/${att_id}`, { method: 'DELETE' });
+          this.attDlg.items = this.attDlg.items.filter(a => a.id !== att_id);
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+
       async loadDistribucion() {
         try { this.distribucion = await this.api(`/distribucion-miembro?anio=${this.anio}&mes=${this.mes}`); } catch(e) {}
       },

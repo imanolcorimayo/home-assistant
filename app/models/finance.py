@@ -78,6 +78,26 @@ class InstallmentPlan(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class Attachment(Base):
+    __tablename__ = "attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_name: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    uploaded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True
+    )
+    uploaded_via: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    role: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 
@@ -196,6 +216,7 @@ class Transaction(Base):
     subcategoria2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     subcategoria3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Transporte: Combustible…
     nota: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    estado_pago: Mapped[Optional[str]] = mapped_column(Text, nullable=True)    # NULL | 'pendiente' | 'pagado'
     origen: Mapped[Optional[str]] = mapped_column(Text, nullable=True)         # telegram | whatsapp | …
     llm_confidence: Mapped[Optional[float]] = mapped_column(Numeric(4, 3), nullable=True)
     llm_raw_output: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

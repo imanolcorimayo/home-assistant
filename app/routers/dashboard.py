@@ -1094,6 +1094,54 @@ async def recalcular_saldo(account_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/pendientes")
+async def get_pendientes(db: AsyncSession = Depends(get_db)):
+    """Transactions con estado_pago='pendiente' (boletas sin pagar).
+    Devuelve lista + KPI agregado para el Bilancio.
+    """
+    rows = (await db.execute(text("""
+        SELECT t.id, t.transaction_date, t.fecha_valor, t.amount, t.subcategoria1,
+               t.subcategoria2, t.nota, a.nombre AS cuenta_nombre
+        FROM transactions t
+        LEFT JOIN accounts a ON a.id = t.account_id
+        WHERE t.deleted_at IS NULL AND t.estado_pago = 'pendiente'
+        ORDER BY t.fecha_valor NULLS LAST, t.transaction_date
+        LIMIT 100
+    """))).all()
+
+    items = [
+        {
+            "id":            str(r.id),
+            "fecha":         r.transaction_date.isoformat() if r.transaction_date else None,
+            "fecha_valor":   r.fecha_valor.isoformat() if r.fecha_valor else None,
+            "amount":        float(r.amount),
+            "subcategoria1": r.subcategoria1,
+            "subcategoria2": r.subcategoria2,
+            "nota":          r.nota,
+            "cuenta_nombre": r.cuenta_nombre,
+        }
+        for r in rows
+    ]
+    total = sum(i["amount"] for i in items)
+    return {"cantidad": len(items), "total": round(total, 2), "items": items}
+
+
+@router.post("/pendientes/{tx_id}/marcar-pagado")
+async def marcar_pagado(tx_id: str, db: AsyncSession = Depends(get_db)):
+    """Marca una transaction pendiente como pagada (cambia estado_pago).
+    Después se le puede subir el comprobante via POST /api/attachments.
+    """
+    result = await db.execute(text("""
+        UPDATE transactions SET estado_pago = 'pagado', updated_at = now()
+        WHERE id = :id AND deleted_at IS NULL AND estado_pago = 'pendiente'
+        RETURNING id
+    """), {"id": tx_id})
+    if not result.first():
+        raise HTTPException(404, "Movimiento no encontrado o no estaba pendiente")
+    await db.commit()
+    return {"ok": True}
+
+
 @router.get("/patrimonio")
 async def get_patrimonio(db: AsyncSession = Depends(get_db)):
     row = (await db.execute(text("SELECT activos, pasivos, patrimonio_neto FROM v_patrimonio_neto"))).first()

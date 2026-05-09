@@ -30,6 +30,110 @@ _redis = redis.from_url(settings.redis_url, decode_responses=True)
 _PENDING_TX_TTL = 300
 
 
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=10, soft_time_limit=120, time_limit=180)
+def process_photo_message(
+    self,
+    file_id: str,
+    chat_id: int,
+    user_id: str,
+    caption: str | None = None,
+    file_name: str = "archivo",
+    mime_type: str = "application/octet-stream",
+) -> None:
+    """Descarga la foto/document de Telegram, la persiste como attachment.
+
+    Si hay caption con texto, le pide al LLM que extraiga una transaction
+    pendiente (estado_pago='pendiente') y vincula el attachment como 'boleta'.
+    Sin caption: queda huérfano para asociación posterior desde la web.
+    """
+    from sqlalchemy import text as sa_t
+    from app.services import attachment_storage
+
+    try:
+        content = telegram_client.download_file_sync(file_id)
+    except Exception as exc:
+        logger.error("No se pudo descargar foto/document chat_id=%s: %s", chat_id, exc)
+        telegram_client.send_message_sync(chat_id, "❌ No pude descargar el archivo.")
+        return
+
+    # Guardar el attachment (usa session sync directa, sin async)
+    from app.core.database import SyncSessionLocal
+    saved_id: str | None = None
+    with SyncSessionLocal() as db:
+        try:
+            res = db.execute(sa_t("""
+                INSERT INTO attachments
+                    (file_path, original_name, mime_type, size_bytes,
+                     uploaded_by, uploaded_via, role, notas)
+                VALUES (:fp, :on, :mt, :sb, :ub, 'telegram', 'boleta', :n)
+                RETURNING id
+            """), {"fp": "__pending__", "on": file_name, "mt": mime_type,
+                   "sb": len(content), "ub": uuid.UUID(user_id), "n": caption})
+            saved_id = str(res.scalar())
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.error("INSERT attachment falló: %s", exc)
+            telegram_client.send_message_sync(chat_id, "❌ No pude guardar el archivo.")
+            return
+
+    # Escribir a disco
+    try:
+        from datetime import datetime as _dt
+        from pathlib import Path
+        now = _dt.now()
+        ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else "bin"
+        ext = "".join(c for c in ext if c.isalnum())[:8] or "bin"
+        rel_path = f"{now.year}/{now.month:02d}/{saved_id}.{ext}"
+        abs_path = Path("/app/data/files") / rel_path
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_bytes(content)
+    except Exception as exc:
+        logger.error("Escribir archivo falló: %s", exc)
+        telegram_client.send_message_sync(chat_id, "❌ Error escribiendo archivo.")
+        return
+
+    # Update file_path
+    with SyncSessionLocal() as db:
+        db.execute(sa_t("UPDATE attachments SET file_path = :fp WHERE id = :id"),
+                   {"fp": rel_path, "id": saved_id})
+        db.commit()
+
+    # Si hay caption, intentar extraer transaction pendiente
+    if caption and caption.strip():
+        try:
+            from app.schemas.finance import LLMTransactionListOutput
+            wrapper = LLMTransactionListOutput(
+                transactions=ollama_client.extract_transactions(caption)
+            )
+            if wrapper.transactions:
+                tx = wrapper.transactions[0]  # tomamos la primera
+                tx_id = _save_transaction(tx, user_id, chat_id, estado_pago="pendiente")
+                # Asociar el attachment al movimiento creado
+                with SyncSessionLocal() as db:
+                    db.execute(sa_t("""
+                        UPDATE attachments
+                        SET entity_type = 'transaction', entity_id = :ei, role = 'boleta'
+                        WHERE id = :id
+                    """), {"ei": tx_id, "id": saved_id})
+                    db.commit()
+                telegram_client.send_message_sync(
+                    chat_id,
+                    f"📎 Boleta guardada y vinculada al movimiento pendiente:\n"
+                    f"• {tx.subcategoria1}{(' / ' + tx.subcategoria2) if tx.subcategoria2 else ''} — €{float(tx.amount):,.2f}\n"
+                    f"Marcalo como pagado desde la web cuando lo abones."
+                )
+                return
+        except Exception as exc:
+            logger.warning("Caption no produjo transaction: %s", exc)
+
+    # Sin caption útil: archivo guardado huérfano
+    telegram_client.send_message_sync(
+        chat_id,
+        f"📎 Archivo guardado ({len(content):,} bytes). Vinculalo a un movimiento desde la web."
+    )
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10, soft_time_limit=300, time_limit=360)
 def process_audio_message(self, file_id: str, chat_id: int, user_id: str) -> None:
     try:
@@ -342,7 +446,12 @@ def _compute_fecha_valor(transaction_date: date, cuenta: dict) -> date:
     return transaction_date
 
 
-def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: int) -> uuid.UUID:
+def _save_transaction(
+    llm_output: LLMTransactionOutput,
+    user_id: str,
+    chat_id: int,
+    estado_pago: str | None = None,
+) -> uuid.UUID:
     tipo = "ingreso" if llm_output.categoria == "Entradas" else "gasto"
 
     with SyncSessionLocal() as db:
@@ -364,6 +473,7 @@ def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: i
             subcategoria2=llm_output.subcategoria2,
             subcategoria3=llm_output.subcategoria3,
             nota=llm_output.nota,
+            estado_pago=estado_pago,
             origen="telegram",
             llm_confidence=llm_output.confidence,
             llm_raw_output=llm_output.model_dump(mode="json"),

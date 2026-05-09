@@ -118,6 +118,77 @@ Texto: "{text}"
 """
 
 
+_FILING_PROMPT = """\
+Eres un asistente que organiza papeles físicos de una familia. Dado un comprobante \
+con su categoría y fecha, sugerí una ruta de carpeta física en español, breve y \
+jerárquica, separada por ' → '.
+
+Reglas:
+- Máximo 4 niveles.
+- Primer nivel: tipo macro (Servicios | Salud | Transporte | Hogar | Educación | Finanzas | Documentos | Varios).
+- Último nivel siempre: año o "{anio} - {mes_nombre}".
+- Devuelve EXCLUSIVAMENTE un JSON válido: {{"ruta": "...", "razon": "..."}}.
+
+Datos:
+- categoria: {categoria}
+- subcategoria1: {sub1}
+- subcategoria2: {sub2}
+- nota: {nota}
+- mime: {mime}
+- fecha: {fecha}
+
+Respuesta JSON:
+"""
+
+
+def suggest_filing_path(
+    *,
+    categoria: str | None,
+    subcategoria1: str | None,
+    subcategoria2: str | None,
+    nota: str | None,
+    mime: str,
+    fecha,
+) -> dict:
+    """Llama al LLM para sugerir dónde guardar el papel físico. Devuelve {ruta, razon}."""
+    nombres_mes = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+    fecha_str = fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha)
+    mes_nombre = nombres_mes[fecha.month - 1] if hasattr(fecha, "month") else "Mes"
+    prompt = _FILING_PROMPT.format(
+        anio=fecha.year if hasattr(fecha, "year") else "Año",
+        mes_nombre=mes_nombre,
+        categoria=categoria or "—",
+        sub1=subcategoria1 or "—",
+        sub2=subcategoria2 or "—",
+        nota=(nota or "—")[:120],
+        mime=mime,
+        fecha=fecha_str,
+    )
+    with httpx.Client(timeout=180.0) as client:
+        resp = client.post(
+            f"{settings.ollama_url}/api/generate",
+            json={
+                "model": settings.ollama_model,
+                "prompt": prompt,
+                "format": "json",
+                "stream": False,
+                "keep_alive": "5m",
+                "options": {"num_ctx": 1024, "num_predict": 128, "temperature": 0.2},
+            },
+        )
+        resp.raise_for_status()
+
+    try:
+        data = json.loads(resp.json()["response"])
+    except Exception:
+        data = {}
+
+    ruta = data.get("ruta") or "Varios → " + (subcategoria1 or "Sin categoría")
+    razon = data.get("razon") or "Sugerencia heurística"
+    return {"ruta": ruta, "razon": razon}
+
+
 def warm_up() -> None:
     """Pre-carga el modelo de Ollama en RAM para evitar el cold start de la 1ª dictada.
 

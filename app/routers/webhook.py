@@ -21,6 +21,7 @@ from app.schemas.finance import TelegramCallbackQuery, TelegramUpdate
 from app.services.telegram_client import answer_callback_query, send_message
 from app.workers.finance_tasks import (
     process_audio_message,
+    process_photo_message,
     process_text_message,
     save_pending_transaction,
 )
@@ -76,6 +77,22 @@ async def telegram_webhook(
     if msg.voice or msg.audio:
         file_id = (msg.voice or msg.audio).file_id
         process_audio_message.delay(file_id, chat_id, user_id)
+    elif msg.photo:
+        # Telegram envía varias resoluciones; tomamos la más grande
+        biggest = max(msg.photo, key=lambda p: (p.width or 0) * (p.height or 0))
+        process_photo_message.delay(
+            biggest.file_id, chat_id, user_id,
+            caption=msg.caption,
+            file_name=f"foto-{msg.message_id}.jpg",
+            mime_type="image/jpeg",
+        )
+    elif msg.document:
+        process_photo_message.delay(
+            msg.document.file_id, chat_id, user_id,
+            caption=msg.caption,
+            file_name=msg.document.file_name or f"doc-{msg.message_id}",
+            mime_type=msg.document.mime_type or "application/octet-stream",
+        )
     elif msg.text:
         process_text_message.delay(msg.text, chat_id, user_id)
 

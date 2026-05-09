@@ -13,6 +13,17 @@ class TelegramFile(BaseModel):
     file_id: str
     file_unique_id: str
     duration: Optional[int] = None
+    file_size: Optional[int] = None
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
+
+
+class TelegramPhotoSize(BaseModel):
+    file_id: str
+    file_unique_id: str
+    width: Optional[int] = None
+    height: Optional[int] = None
+    file_size: Optional[int] = None
 
 class TelegramChat(BaseModel):
     id: int
@@ -28,8 +39,11 @@ class TelegramMessage(BaseModel):
     from_user: Optional[TelegramUser] = Field(None, alias="from")
     chat: TelegramChat
     text: Optional[str] = None
+    caption: Optional[str] = None
     voice: Optional[TelegramFile] = None
     audio: Optional[TelegramFile] = None
+    photo: Optional[list[TelegramPhotoSize]] = None
+    document: Optional[TelegramFile] = None
     model_config = {"populate_by_name": True}
 
 class TelegramCallbackMessage(BaseModel):
