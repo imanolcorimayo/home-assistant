@@ -105,6 +105,8 @@ async def _handle_command(
         await _cmd_presupuesto(args, chat_id, db)
     elif cmd == "/proyeccion":
         await _cmd_proyeccion(chat_id, db)
+    elif cmd == "/notif":
+        await _cmd_notif(args, member, chat_id, db)
     elif cmd == "/ayuda":
         await send_message(
             chat_id,
@@ -115,6 +117,8 @@ async def _handle_command(
             "/presupuesto  — ver límites mensuales y % usado\n"
             "/presupuesto Supermercado 400  — setear límite\n"
             "/proyeccion   — proyección de gasto a fin de mes\n"
+            "/notif        — ver tus preferencias de notificaciones\n"
+            "/notif on|off [tipo]  — activar/desactivar avisos\n"
             "/undo         — eliminar el último movimiento registrado\n"
             "/ayuda        — esta ayuda",
         )
@@ -393,6 +397,82 @@ async def _cmd_presupuesto(args: str, chat_id: int, db: AsyncSession) -> None:
             f"{_budget_bar(pct)}  {pct:.0f}%"
         )
 
+    await send_message(chat_id, "\n".join(lines))
+
+
+_NOTIF_KINDS = {
+    "budget":          "Alertas de presupuesto",
+    "reminder":        "Recordatorios de vencimiento",
+    "monthly_summary": "Resumen mensual",
+    "anomaly":         "Gastos inusuales",
+}
+_NOTIF_ALIASES = {
+    "presupuesto":  "budget",
+    "presupuestos": "budget",
+    "vencimiento":  "reminder",
+    "vencimientos": "reminder",
+    "recordatorio": "reminder",
+    "resumen":      "monthly_summary",
+    "anomalia":     "anomaly",
+    "anomalias":    "anomaly",
+}
+
+
+async def _cmd_notif(args: str, member: FamilyMember, chat_id: int, db: AsyncSession) -> None:
+    """
+    /notif                 — lista preferencias actuales
+    /notif on|off [tipo]   — activa/desactiva un tipo (o todos si sin tipo)
+    """
+    if not member.telegram_user_id:
+        await send_message(chat_id, "Tu usuario no está registrado para notificaciones.")
+        return
+
+    parts = args.strip().split() if args else []
+    action = parts[0].lower() if parts else None
+    target = " ".join(parts[1:]).strip().lower() if len(parts) > 1 else None
+
+    if action in {"on", "off"}:
+        kinds: list[str]
+        if not target:
+            kinds = list(_NOTIF_KINDS.keys())
+        else:
+            kind = _NOTIF_ALIASES.get(target, target)
+            if kind not in _NOTIF_KINDS:
+                await send_message(chat_id, f"Tipo desconocido: {target}.\nTipos: " +
+                                   ", ".join(_NOTIF_KINDS.keys()))
+                return
+            kinds = [kind]
+        enabled = action == "on"
+        for k in kinds:
+            await db.execute(text("""
+                INSERT INTO user_preferences (telegram_user_id, kind, enabled, preferred_hour)
+                VALUES (:u, :k, :e, 9)
+                ON CONFLICT (telegram_user_id, kind) DO UPDATE
+                  SET enabled = :e, updated_at = now()
+            """), {"u": member.telegram_user_id, "k": k, "e": enabled})
+        await db.commit()
+        verbo = "activadas" if enabled else "desactivadas"
+        cuales = ", ".join(_NOTIF_KINDS[k] for k in kinds)
+        await send_message(chat_id, f"✓ {cuales} {verbo}.")
+        return
+
+    # Sin args → listar
+    rows = (await db.execute(text("""
+        SELECT kind, enabled FROM user_preferences
+        WHERE telegram_user_id = :u
+        ORDER BY kind
+    """), {"u": member.telegram_user_id})).all()
+    if not rows:
+        await send_message(chat_id, "Sin preferencias configuradas. Por default: todas activas.")
+        return
+    estado = {r.kind: r.enabled for r in rows}
+    lines = ["Tus notificaciones:"]
+    for k, label in _NOTIF_KINDS.items():
+        flag = "✓" if estado.get(k, True) else "✗"
+        lines.append(f"  {flag} {label}")
+    lines.append("")
+    lines.append("Para cambiar: /notif on|off [tipo]")
+    lines.append("Tipos: budget, reminder, resumen, anomalia")
     await send_message(chat_id, "\n".join(lines))
 
 

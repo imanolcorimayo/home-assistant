@@ -32,9 +32,13 @@ async def answer_callback_query(callback_query_id: str, text: str = "") -> None:
 # Sync (Celery workers)
 # ---------------------------------------------------------------------------
 
-def send_message_sync(chat_id: int, text: str) -> None:
-    with httpx.Client() as client:
-        client.post(f"{_BASE}/sendMessage", json={"chat_id": chat_id, "text": text})
+def send_message_sync(chat_id: int, text: str, parse_mode: str | None = None) -> None:
+    payload: dict = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    with httpx.Client(timeout=15.0) as client:
+        resp = client.post(f"{_BASE}/sendMessage", json=payload)
+        resp.raise_for_status()
 
 
 def send_message_with_keyboard_sync(

@@ -78,6 +78,35 @@ class InstallmentPlan(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    target_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    scheduled_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    sent_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    related_entity_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    related_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    dedupe_key: Mapped[Optional[str]] = mapped_column(Text, unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    preferred_hour: Mapped[Optional[int]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class CardStatement(Base):
     __tablename__ = "card_statements"
 

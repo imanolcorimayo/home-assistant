@@ -15,6 +15,7 @@ from app.models.finance import Transaction
 from app.schemas.finance import LLMTransactionListOutput, LLMTransactionOutput
 from app.services import (
     loan_generator,
+    notification_dispatcher,
     ollama_client,
     recurring_generator,
     statement_closer,
@@ -107,6 +108,163 @@ def close_card_statements() -> int:
     if created:
         logger.info("Resúmenes de tarjeta cerrados: %d", len(created))
     return len(created)
+
+
+@celery_app.task(name="app.workers.finance_tasks.dispatch_notifications")
+def dispatch_notifications() -> dict:
+    """Beat-scheduled: cada 5 min lee la cola de notifications y las envía."""
+    return notification_dispatcher.send_pending()
+
+
+@celery_app.task(name="app.workers.finance_tasks.schedule_due_reminders")
+def schedule_due_reminders() -> int:
+    """Beat-scheduled diario 09:00: encola recordatorios de cosas que vencen
+    en ≤2 días (cuotas de préstamo, vencimiento de tarjeta).
+    """
+    from sqlalchemy import text as sa_t
+    from datetime import date, timedelta
+
+    encolados = 0
+    with SyncSessionLocal() as db:
+        # Préstamos: día de vto en 0/1/2 días
+        targets = db.execute(sa_t("""
+            SELECT l.id, l.nombre, l.monto_cuota, l.dia_vencimiento, fm.telegram_user_id
+            FROM loans l
+            JOIN accounts a    ON a.id  = l.cuenta_pago_id
+            JOIN family_members fm ON fm.id = a.family_member_id
+            WHERE l.activo AND fm.telegram_user_id IS NOT NULL
+              AND l.fecha_fin >= CURRENT_DATE
+        """)).all()
+        today = date.today()
+        for t in targets:
+            from calendar import monthrange
+            day = min(t.dia_vencimiento, monthrange(today.year, today.month)[1])
+            target_d = date(today.year, today.month, day)
+            if target_d < today:
+                # ya pasó este mes → siguiente
+                ny, nm = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+                target_d = date(ny, nm, min(t.dia_vencimiento, monthrange(ny, nm)[1]))
+            if (target_d - today).days not in (0, 1, 2):
+                continue
+            dk = f"loan-{t.id}-{target_d.isoformat()}"
+            res = notification_dispatcher.enqueue(
+                target_chat_id=t.telegram_user_id,
+                kind="reminder",
+                title=f"🏦 Cuota de {t.nombre}",
+                body=f"€{float(t.monto_cuota):,.2f} se debita el {target_d.strftime('%d/%m')}",
+                related_entity_type="loan", related_entity_id=str(t.id),
+                dedupe_key=dk,
+            )
+            if res: encolados += 1
+
+        # Tarjetas: vencimiento próximo
+        cards = db.execute(sa_t("""
+            SELECT a.id, a.nombre, a.vencimiento_dia, a.cierre_dia, fm.telegram_user_id
+            FROM accounts a
+            JOIN family_members fm ON fm.id = a.family_member_id
+            WHERE a.activa AND a.tipo = 'tarjeta_credito'
+              AND a.vencimiento_dia IS NOT NULL
+              AND fm.telegram_user_id IS NOT NULL
+        """)).all()
+        for c in cards:
+            from calendar import monthrange
+            day = min(c.vencimiento_dia, monthrange(today.year, today.month)[1])
+            target_d = date(today.year, today.month, day)
+            if target_d < today:
+                ny, nm = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+                target_d = date(ny, nm, min(c.vencimiento_dia, monthrange(ny, nm)[1]))
+            if (target_d - today).days not in (0, 1, 2):
+                continue
+            # Estimación monto del ciclo en curso (gastos no asociados a un statement)
+            from datetime import timedelta as td
+            cierre_estimado = target_d - td(days=15)  # heurística, refinable
+            row = db.execute(sa_t("""
+                SELECT COALESCE(SUM(CASE WHEN tipo='gasto' THEN amount ELSE -amount END), 0) AS m
+                FROM transactions
+                WHERE account_id = :a AND deleted_at IS NULL AND card_statement_id IS NULL
+                  AND transaction_date <= CURRENT_DATE
+            """), {"a": c.id}).first()
+            monto = float(row.m or 0)
+            dk = f"card-{c.id}-{target_d.isoformat()}"
+            res = notification_dispatcher.enqueue(
+                target_chat_id=c.telegram_user_id,
+                kind="reminder",
+                title=f"💳 Vto {c.nombre}",
+                body=f"~€{monto:,.0f} se debitan el {target_d.strftime('%d/%m')}",
+                related_entity_type="account", related_entity_id=str(c.id),
+                dedupe_key=dk,
+            )
+            if res: encolados += 1
+
+    if encolados:
+        logger.info("Recordatorios encolados: %d", encolados)
+    return encolados
+
+
+@celery_app.task(name="app.workers.finance_tasks.schedule_monthly_summary")
+def schedule_monthly_summary() -> int:
+    """Beat-scheduled día 1 a las 09:00: encola resumen del mes anterior."""
+    from sqlalchemy import text as sa_t
+    from datetime import date
+
+    today = date.today()
+    if today.month == 1:
+        py, pm = today.year - 1, 12
+    else:
+        py, pm = today.year, today.month - 1
+
+    encolados = 0
+    with SyncSessionLocal() as db:
+        # Balance del mes anterior
+        bal = db.execute(sa_t("""
+            SELECT ingresos, gastos, balance, pct_gasto_sobre_ingreso
+            FROM v_balance_mensual WHERE anio = :a AND mes = :m
+        """), {"a": py, "m": pm}).first()
+
+        # Top 3 gastos del mes anterior
+        top = db.execute(sa_t("""
+            SELECT subcategoria1, SUM(total) AS total
+            FROM v_gastos_variables WHERE anio = :a AND mes = :m
+            GROUP BY subcategoria1 ORDER BY total DESC LIMIT 3
+        """), {"a": py, "m": pm}).all()
+
+        targets = db.execute(sa_t(
+            "SELECT telegram_user_id FROM family_members WHERE telegram_user_id IS NOT NULL"
+        )).all()
+
+        nombres_mes = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                       'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+        title = f"📊 Resumen — {nombres_mes[pm-1]} {py}"
+        if bal:
+            ing = float(bal.ingresos or 0)
+            gas = float(bal.gastos or 0)
+            ahorro = ing - gas
+            tasa = (ahorro/ing*100) if ing > 0 else None
+            tasa_s = f"{tasa:.1f}%" if tasa is not None else "—"
+            body = (
+                f"Ingresos: €{ing:,.0f}\n"
+                f"Gastos:   €{gas:,.0f}\n"
+                f"Balance:  €{ahorro:,.0f}  (tasa ahorro {tasa_s})"
+            )
+            if top:
+                body += "\n\nTop 3 gastos:\n" + "\n".join(
+                    f"  • {t.subcategoria1}: €{float(t.total):,.0f}" for t in top
+                )
+        else:
+            body = "Sin datos del mes anterior."
+
+        for t in targets:
+            dk = f"summary-{py}-{pm}-{t.telegram_user_id}"
+            res = notification_dispatcher.enqueue(
+                target_chat_id=t.telegram_user_id,
+                kind="monthly_summary",
+                title=title, body=body, dedupe_key=dk,
+            )
+            if res: encolados += 1
+
+    if encolados:
+        logger.info("Resúmenes mensuales encolados: %d", encolados)
+    return encolados
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=5)
@@ -218,7 +376,125 @@ def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: i
             tipo, tx.amount, tx.subcategoria1, tx.subcategoria2, account_id, fecha_valor,
         )
 
+    # Hooks de notificación (post-commit, no bloquean el guardado si fallan)
+    try:
+        if tipo == "gasto":
+            _maybe_notify_budget(tx_id, chat_id)
+            _maybe_notify_anomaly(tx_id, chat_id)
+    except Exception as exc:
+        logger.warning("Hooks de notificación fallaron tx=%s: %s", tx_id, exc)
+
     return tx_id
+
+
+def _maybe_notify_budget(tx_id: uuid.UUID, chat_id: int) -> None:
+    """Si la transaction recién creada hace cruzar el 80% o el 100% del presupuesto
+    de su subcategoría, encola una notificación.
+    """
+    with SyncSessionLocal() as db:
+        info = db.execute(sa_text("""
+            WITH tx AS (
+                SELECT subcategoria1, transaction_date FROM transactions WHERE id = :id
+            ),
+            mes_actual AS (
+                SELECT
+                    EXTRACT(YEAR  FROM transaction_date)::INT AS y,
+                    EXTRACT(MONTH FROM transaction_date)::INT AS m,
+                    subcategoria1
+                FROM tx
+            ),
+            gastado AS (
+                SELECT SUM(amount) AS total
+                FROM transactions, mes_actual
+                WHERE transactions.deleted_at IS NULL
+                  AND transactions.tipo = 'gasto'
+                  AND transactions.subcategoria1 = mes_actual.subcategoria1
+                  AND EXTRACT(YEAR  FROM transactions.transaction_date) = mes_actual.y
+                  AND EXTRACT(MONTH FROM transactions.transaction_date) = mes_actual.m
+            ),
+            limite AS (
+                SELECT b.limit_amount FROM monthly_budgets b, mes_actual
+                WHERE LOWER(b.subcategoria1) = LOWER(mes_actual.subcategoria1)
+                LIMIT 1
+            )
+            SELECT (SELECT total FROM gastado) AS gastado,
+                   (SELECT limit_amount FROM limite) AS limite,
+                   (SELECT subcategoria1 FROM mes_actual) AS sub1,
+                   (SELECT y FROM mes_actual) AS y,
+                   (SELECT m FROM mes_actual) AS m
+        """), {"id": tx_id}).first()
+
+    if not info or not info.limite or not info.gastado:
+        return
+
+    limite = float(info.limite)
+    gastado = float(info.gastado)
+    pct = gastado / limite * 100
+    sub1 = info.sub1
+
+    # Calcular el threshold cruzado (sin la última transaction)
+    # Para simplificar: si pct >= 100 o pct >= 80, encolamos con dedupe por mes/threshold
+    if pct >= 100:
+        threshold = 100
+        title = f"⚠️ Presupuesto excedido — {sub1}"
+        body = f"Gastaste €{gastado:,.0f} de €{limite:,.0f} ({pct:.0f}%)"
+    elif pct >= 80:
+        threshold = 80
+        title = f"📊 Presupuesto al {pct:.0f}% — {sub1}"
+        body = f"Llevás €{gastado:,.0f} de €{limite:,.0f} este mes"
+    else:
+        return
+
+    notification_dispatcher.enqueue(
+        target_chat_id=chat_id,
+        kind="budget",
+        title=title, body=body,
+        related_entity_type="transaction", related_entity_id=str(tx_id),
+        dedupe_key=f"budget-{sub1}-{info.y}-{info.m}-{threshold}",
+    )
+
+
+def _maybe_notify_anomaly(tx_id: uuid.UUID, chat_id: int) -> None:
+    """Si el monto excede avg+2σ del histórico de su subcategoría (con n>=3),
+    encola una alerta de anomalía.
+    """
+    with SyncSessionLocal() as db:
+        info = db.execute(sa_text("""
+            WITH tx AS (
+                SELECT subcategoria1, amount AS tx_amount FROM transactions WHERE id = :id
+            ),
+            stats AS (
+                SELECT AVG(t2.amount) AS avg_a, STDDEV_POP(t2.amount) AS sd_a
+                FROM transactions t2, tx
+                WHERE t2.deleted_at IS NULL
+                  AND t2.tipo = 'gasto'
+                  AND t2.subcategoria1 = tx.subcategoria1
+                  AND t2.id <> :id
+                  AND t2.transaction_date >= CURRENT_DATE - INTERVAL '6 months'
+                HAVING COUNT(*) >= 3
+            )
+            SELECT (SELECT tx_amount      FROM tx)    AS amount,
+                   (SELECT subcategoria1  FROM tx)    AS sub1,
+                   (SELECT avg_a          FROM stats) AS avg_a,
+                   (SELECT sd_a           FROM stats) AS sd_a
+        """), {"id": tx_id}).first()
+
+    if not info or info.avg_a is None or info.sd_a is None:
+        return
+    amount = float(info.amount)
+    avg_a  = float(info.avg_a)
+    sd_a   = float(info.sd_a or 0)
+    if not (amount > avg_a + 2 * sd_a and amount > avg_a * 1.5):
+        return
+    excess = (amount - avg_a) / avg_a * 100
+    notification_dispatcher.enqueue(
+        target_chat_id=chat_id,
+        kind="anomaly",
+        title=f"🔍 Gasto inusual — {info.sub1}",
+        body=f"€{amount:,.0f} ({excess:+.0f}% vs habitual €{avg_a:,.0f})",
+        related_entity_type="transaction", related_entity_id=str(tx_id),
+        dedupe_key=f"anomaly-{tx_id}",
+    )
 
 
 def _send_bulk_confirmation(

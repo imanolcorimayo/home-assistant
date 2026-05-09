@@ -41,6 +41,19 @@ celery_app.conf.update(
             "task": "app.workers.finance_tasks.close_card_statements",
             "schedule": crontab(hour=6, minute=10),
         },
+        # Notificaciones
+        "dispatch-notifications": {
+            "task": "app.workers.finance_tasks.dispatch_notifications",
+            "schedule": crontab(minute="*/5"),
+        },
+        "schedule-due-reminders": {
+            "task": "app.workers.finance_tasks.schedule_due_reminders",
+            "schedule": crontab(hour=9, minute=0),
+        },
+        "schedule-monthly-summary": {
+            "task": "app.workers.finance_tasks.schedule_monthly_summary",
+            "schedule": crontab(day_of_month=1, hour=9, minute=0),
+        },
     },
 )
 
