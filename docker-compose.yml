@@ -133,7 +133,31 @@ services:
           memory: 2g
           cpus: "3.0"
 
+  backup:
+    image: postgres:16-alpine
+    container_name: sovereignbox_backup
+    depends_on:
+      - postgres
+    environment:
+      PGUSER: sovereign
+      PGPASSWORD: sovereign123
+      PGHOST: postgres
+      PGDATABASE: sovereignbox
+      RETENTION_DAYS: "30"
+    volumes:
+      - db_backups:/backups
+      - ./scripts:/scripts:ro
+      - media_data:/media_data:ro
+    entrypoint: ["/bin/sh", "/scripts/backup-loop.sh"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.3"
+
 volumes:
   postgres_data:
   ollama_data:
   media_data:
+  db_backups:

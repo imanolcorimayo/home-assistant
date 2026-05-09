@@ -118,11 +118,35 @@ Texto: "{text}"
 """
 
 
+def warm_up() -> None:
+    """Pre-carga el modelo de Ollama en RAM para evitar el cold start de la 1ª dictada.
+
+    Hace una request mínima sin esperar respuesta útil. Si Ollama está caído
+    o el modelo no existe, loguea pero no falla — el worker arranca igual.
+    """
+    try:
+        with httpx.Client(timeout=180.0) as client:
+            resp = client.post(
+                f"{settings.ollama_url}/api/generate",
+                json={
+                    "model": settings.ollama_model,
+                    "prompt": "ok",
+                    "stream": False,
+                    "keep_alive": "30m",
+                    "options": {"num_ctx": 256, "num_predict": 4, "temperature": 0},
+                },
+            )
+            resp.raise_for_status()
+            logger.info("Ollama warm-up OK (modelo: %s)", settings.ollama_model)
+    except Exception as exc:
+        logger.warning("Ollama warm-up falló (no crítico): %s", exc)
+
+
 def extract_transactions(text: str) -> list[LLMTransactionOutput]:
     today = date.today().isoformat()
     prompt = _EXTRACTION_PROMPT.format(text=text, today=today)
 
-    with httpx.Client(timeout=90.0) as client:
+    with httpx.Client(timeout=180.0) as client:
         resp = client.post(
             f"{settings.ollama_url}/api/generate",
             json={

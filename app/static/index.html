@@ -680,6 +680,7 @@
         </template>
       </div>
       <div class="modal-actions">
+        <button class="form-btn-del" @click="recalcularSaldo()" title="Pone saldo_fecha al primer movimiento histórico">Recalcular</button>
         <button class="form-btn-ghost" @click="closeEditCuenta()">Cancelar</button>
         <button class="form-btn" @click="saveEditCuenta()">Guardar</button>
       </div>
@@ -2141,6 +2142,24 @@
         this.editCuentaDlg.cuenta   = null;
         this.editCuentaDlg.original = null;
       },
+      async recalcularSaldo() {
+        const c = this.editCuentaDlg.cuenta;
+        const ok = await this.confirm(
+          `¿Recalcular el saldo de "${c.nombre}"? Esto pone saldo_fecha al primer movimiento histórico — todas las transacciones pasadas pasan a afectar el saldo actual.`,
+          { title: 'Recalcular saldo', okLabel: 'Recalcular' }
+        );
+        if (!ok) return;
+        try {
+          const r = await this.api(`/cuentas/${c.id}/recalcular-saldo`, { method: 'POST' });
+          this.showToast(`Saldo recalculado · saldo_fecha = ${r.saldo_fecha_nueva}`, 'success');
+          this.closeEditCuenta();
+          await this.loadCuentas();
+          await this.loadPatrimonio();
+        } catch(e) {
+          this.showToast('Error: ' + (e.message || e), 'error');
+        }
+      },
+
       async saveEditCuenta() {
         const c = this.editCuentaDlg.cuenta;
         const o = this.editCuentaDlg.original;

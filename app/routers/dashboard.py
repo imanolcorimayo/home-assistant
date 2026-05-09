@@ -2,7 +2,7 @@
 API REST para el dashboard web — /api/*
 """
 from calendar import monthrange
-from datetime import date as date_cls, datetime
+from datetime import date as date_cls, datetime, timedelta
 from typing import Optional
 
 import csv
@@ -1054,6 +1054,44 @@ async def update_cuenta(
         raise HTTPException(404, "Cuenta no encontrada")
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/cuentas/{account_id}/recalcular-saldo")
+async def recalcular_saldo(account_id: str, db: AsyncSession = Depends(get_db)):
+    """Pone saldo_fecha = MIN(transaction_date) - 1 día.
+
+    Útil cuando cargás transacciones retroactivas que el modelo de saldos
+    ignoraría. Después del recálculo, todo el historial computa al saldo
+    actual (asumiendo que saldo_inicial era el saldo en el inicio del histórico).
+    """
+    cuenta = (await db.execute(
+        text("SELECT id, saldo_fecha FROM accounts WHERE id = :id"),
+        {"id": account_id},
+    )).first()
+    if not cuenta:
+        raise HTTPException(404, "Cuenta no encontrada")
+
+    min_row = (await db.execute(text("""
+        SELECT MIN(transaction_date) AS min_date
+        FROM transactions
+        WHERE account_id = :id AND deleted_at IS NULL
+    """), {"id": account_id})).first()
+
+    if not min_row or min_row.min_date is None:
+        raise HTTPException(400, "La cuenta no tiene transacciones — nada que recalcular")
+
+    nueva_fecha = min_row.min_date - timedelta(days=1)
+    await db.execute(
+        text("UPDATE accounts SET saldo_fecha = :f, updated_at = now() WHERE id = :id"),
+        {"f": nueva_fecha, "id": account_id},
+    )
+    await db.commit()
+    return {
+        "ok": True,
+        "saldo_fecha_anterior": cuenta.saldo_fecha.isoformat() if cuenta.saldo_fecha else None,
+        "saldo_fecha_nueva":    nueva_fecha.isoformat(),
+        "primera_transaccion":  min_row.min_date.isoformat(),
+    }
 
 
 @router.get("/patrimonio")

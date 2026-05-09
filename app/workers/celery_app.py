@@ -1,7 +1,12 @@
+import logging
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_ready
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 celery_app = Celery(
     "sovereignbox",
@@ -38,3 +43,14 @@ celery_app.conf.update(
         },
     },
 )
+
+
+@worker_ready.connect
+def _warmup_ollama_on_start(**_kwargs) -> None:
+    """Cuando el worker está listo, precarga Ollama para que la 1ª dictada
+    no espere los 30-60s del cold start. Si falla, no aborta el arranque."""
+    try:
+        from app.services import ollama_client
+        ollama_client.warm_up()
+    except Exception as exc:
+        logger.warning("warm-up Ollama omitido: %s", exc)
