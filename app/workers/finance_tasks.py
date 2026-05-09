@@ -3,9 +3,12 @@ Tareas Celery del módulo financiero.
 """
 import uuid
 import logging
+from calendar import monthrange
+from datetime import date, timedelta
 
 import redis
 from pydantic import ValidationError
+from sqlalchemy import text as sa_text
 
 from app.core.config import settings
 from app.core.database import SyncSessionLocal
@@ -93,13 +96,89 @@ def save_pending_transaction(self, chat_id: int, user_id: str, confirmed: bool) 
     _send_bulk_confirmation(chat_id, wrapper.transactions, saved)
 
 
+def _resolve_account(db, user_id: str, medio_pago: str | None, cuenta_hint: str | None) -> tuple[uuid.UUID, str, dict]:
+    """Devuelve (account_id, tipo_cuenta, info) según las pistas del LLM.
+
+    Estrategia: pista explícita > medio_pago > default por miembro.
+    Devuelve la fila de la cuenta como dict (id, tipo, cierre_dia, vencimiento_dia).
+    """
+    def _fetch(where: str, params: dict) -> dict | None:
+        row = db.execute(sa_text(
+            f"SELECT id, tipo, cierre_dia, vencimiento_dia FROM accounts WHERE activa AND {where} LIMIT 1"
+        ), params).first()
+        return dict(row._mapping) if row else None
+
+    cuenta = None
+
+    if cuenta_hint == "casa":
+        cuenta = _fetch("tipo = 'efectivo'", {})
+    elif cuenta_hint in ("hector", "luisiana"):
+        nombre = "Hector Marioni" if cuenta_hint == "hector" else "Luisiana"
+        cuenta = _fetch(
+            "tipo = 'corriente' AND family_member_id = (SELECT id FROM family_members WHERE full_name = :n)",
+            {"n": nombre},
+        )
+
+    if cuenta is None and medio_pago == "tarjeta_credito":
+        cuenta = _fetch(
+            "tipo = 'tarjeta_credito' AND family_member_id = :uid",
+            {"uid": user_id},
+        )
+
+    if cuenta is None and medio_pago == "efectivo":
+        cuenta = _fetch("tipo = 'efectivo'", {})
+
+    if cuenta is None:
+        cuenta = _fetch(
+            "tipo = 'corriente' AND family_member_id = :uid",
+            {"uid": user_id},
+        )
+
+    if cuenta is None:
+        raise RuntimeError(f"No se encontró cuenta default para user_id={user_id}")
+
+    return cuenta["id"], cuenta["tipo"], cuenta
+
+
+def _compute_fecha_valor(transaction_date: date, cuenta: dict) -> date:
+    """Para tarjeta_credito: fecha del próximo vencimiento según ciclo cierre/vto.
+    Para otros tipos: la misma fecha de operación.
+    """
+    if cuenta["tipo"] != "tarjeta_credito":
+        return transaction_date
+
+    cierre = cuenta["cierre_dia"] or 30
+    vto = cuenta["vencimiento_dia"] or 15
+
+    # Si se compró antes/igual al cierre del mes, el resumen cierra este mes y se paga el mes siguiente.
+    # Si se compró después del cierre, el resumen cierra el mes siguiente y se paga dos meses después.
+    if transaction_date.day <= cierre:
+        target_y, target_m = transaction_date.year, transaction_date.month + 1
+    else:
+        target_y, target_m = transaction_date.year, transaction_date.month + 2
+
+    while target_m > 12:
+        target_y += 1
+        target_m -= 12
+
+    last_day = monthrange(target_y, target_m)[1]
+    return date(target_y, target_m, min(vto, last_day))
+
+
 def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: int) -> uuid.UUID:
     tipo = "ingreso" if llm_output.categoria == "Entradas" else "gasto"
 
     with SyncSessionLocal() as db:
+        account_id, _, cuenta = _resolve_account(
+            db, user_id, llm_output.medio_pago, llm_output.cuenta_hint
+        )
+        fecha_valor = _compute_fecha_valor(llm_output.transaction_date, cuenta)
+
         tx = Transaction(
             family_member_id=uuid.UUID(user_id),
+            account_id=account_id,
             transaction_date=llm_output.transaction_date,
+            fecha_valor=fecha_valor,
             tipo=tipo,
             amount=float(llm_output.amount),
             currency=llm_output.currency,
@@ -115,7 +194,10 @@ def _save_transaction(llm_output: LLMTransactionOutput, user_id: str, chat_id: i
         db.add(tx)
         db.commit()
         tx_id = tx.id
-        logger.info("Guardado: %s %.2f %s/%s", tipo, tx.amount, tx.subcategoria1, tx.subcategoria2)
+        logger.info(
+            "Guardado: %s %.2f %s/%s account=%s fecha_valor=%s",
+            tipo, tx.amount, tx.subcategoria1, tx.subcategoria2, account_id, fecha_valor,
+        )
 
     return tx_id
 

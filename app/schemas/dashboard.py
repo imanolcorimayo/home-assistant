@@ -18,3 +18,12 @@ class MovimientoUpdate(BaseModel):
     amount: Optional[float] = Field(default=None, gt=0)
     nota: Optional[str] = Field(default=None, max_length=500)
     transaction_date: Optional[date] = None
+
+
+class CuentaUpdate(BaseModel):
+    nombre: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    saldo_inicial: Optional[float] = Field(default=None)
+    saldo_fecha: Optional[date] = None
+    cierre_dia: Optional[int] = Field(default=None, ge=1, le=31)
+    vencimiento_dia: Optional[int] = Field(default=None, ge=1, le=31)
+    activa: Optional[bool] = None

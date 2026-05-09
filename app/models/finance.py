@@ -35,6 +35,28 @@ class FamilyMember(Base):
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="family_member")
 
 
+class Account(Base):
+    __tablename__ = "accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    nombre: Mapped[str] = mapped_column(Text, nullable=False)
+    tipo: Mapped[str] = mapped_column(Text, nullable=False)  # 'corriente' | 'efectivo' | 'tarjeta_credito'
+    family_member_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True
+    )
+    moneda: Mapped[str] = mapped_column(Text, nullable=False, default="EUR")
+    saldo_inicial: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    saldo_fecha: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
+    activa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    cierre_dia: Mapped[Optional[int]] = mapped_column(nullable=True)
+    vencimiento_dia: Mapped[Optional[int]] = mapped_column(nullable=True)
+    cuenta_pago_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -42,7 +64,11 @@ class Transaction(Base):
     family_member_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=False
     )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    fecha_valor: Mapped[date] = mapped_column(Date, nullable=False)
     tipo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)           # 'ingreso' | 'gasto'
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")

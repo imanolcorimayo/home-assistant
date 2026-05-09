@@ -29,7 +29,9 @@ válido — sin texto adicional, sin markdown:
       "subcategoria3": "<solo para Transporte: Combustible|Nafta|Mantenimiento|Aseguracion|Impuesto|Revision tecnica|Reparacion|Lavado, o null>",
       "nota": "<descripción corta en español, máximo 10 palabras>",
       "transaction_date": "{today}",
-      "confidence": <0.0 a 1.0>
+      "confidence": <0.0 a 1.0>,
+      "medio_pago": "<tarjeta_credito | efectivo | cuenta | null>",
+      "cuenta_hint": "<hector | luisiana | casa | null>"
     }}
   ]
 }}
@@ -86,6 +88,18 @@ EJEMPLOS:
 - "pagué el Windtre 15€"               → Gastos Fijos,     sub1:Celulares,    sub2:Windtre,       sub3:null
 - "pagué la cuota del Illiad"          → Gastos Fijos,     sub1:Celulares,    sub2:Illiad,        sub3:null, confidence:0.5
 - "gasté 30€ en farmacia y 85€ en el súper" → [{{Salud/Farmacia/null}}, {{Supermercado/null/null}}]
+- "compré 200€ en el super con la tarjeta"   → Supermercado, medio_pago:"tarjeta_credito"
+- "pagué 50€ en efectivo del fondo de casa"  → medio_pago:"efectivo", cuenta_hint:"casa"
+- "Lu pagó 80€ con su débito"                → cuenta_hint:"luisiana", medio_pago:"cuenta"
+
+MEDIO DE PAGO Y CUENTA (campos opcionales — si no se mencionan, devolvé null):
+- "con la tarjeta", "con visa", "con la credit", "tarjeta de crédito" → medio_pago: "tarjeta_credito"
+- "en efectivo", "cash", "billetes", "lo pagué en mano" → medio_pago: "efectivo"
+- "transferí", "desde mi cuenta", "con débito", "con la tarjeta de débito" → medio_pago: "cuenta"
+- "lo pagó Hector / yo" → cuenta_hint: "hector"
+- "lo pagó Luisiana / Lu" → cuenta_hint: "luisiana"
+- "del fondo de casa", "ahorros de casa", "del efectivo de casa" → cuenta_hint: "casa"
+- Si NO se menciona explícitamente: medio_pago=null, cuenta_hint=null. NO inventes.
 
 REGLAS:
 - El texto puede ser verbal ("gasté X€", "pagué X€") o nominal ("gasto de X€ en Y",

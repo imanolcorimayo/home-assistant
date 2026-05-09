@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.schemas.dashboard import MovimientoUpdate, PresupuestoIn
+from app.schemas.dashboard import CuentaUpdate, MovimientoUpdate, PresupuestoIn
 
 router = APIRouter()
 
@@ -559,3 +559,72 @@ async def get_insights(
         })
 
     return insights
+
+
+# ─────────────────────────────────────────────────────────────────
+# Cuentas y patrimonio
+# ─────────────────────────────────────────────────────────────────
+
+@router.get("/cuentas")
+async def get_cuentas(db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        text("""
+            SELECT id, nombre, tipo, family_member_id, miembro, moneda,
+                   saldo_inicial, saldo_fecha, saldo_actual, activa,
+                   cierre_dia, vencimiento_dia, cuenta_pago_id
+            FROM v_saldo_cuentas
+            WHERE activa
+            ORDER BY
+              CASE tipo WHEN 'corriente' THEN 1 WHEN 'efectivo' THEN 2 WHEN 'tarjeta_credito' THEN 3 ELSE 9 END,
+              nombre
+        """),
+    )).all()
+    return [
+        {
+            "id": str(r.id),
+            "nombre": r.nombre,
+            "tipo": r.tipo,
+            "miembro": r.miembro,
+            "moneda": r.moneda,
+            "saldo_inicial": float(r.saldo_inicial),
+            "saldo_fecha": r.saldo_fecha.isoformat() if r.saldo_fecha else None,
+            "saldo_actual": float(r.saldo_actual),
+            "activa": r.activa,
+            "cierre_dia": r.cierre_dia,
+            "vencimiento_dia": r.vencimiento_dia,
+            "cuenta_pago_id": str(r.cuenta_pago_id) if r.cuenta_pago_id else None,
+        }
+        for r in rows
+    ]
+
+
+@router.patch("/cuentas/{account_id}")
+async def update_cuenta(
+    account_id: str,
+    payload: CuentaUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(400, "Sin cambios")
+
+    sets = ", ".join(f"{k} = :{k}" for k in fields)
+    fields["id"] = account_id
+    result = await db.execute(
+        text(f"UPDATE accounts SET {sets}, updated_at = now() WHERE id = :id RETURNING id"),
+        fields,
+    )
+    if not result.first():
+        raise HTTPException(404, "Cuenta no encontrada")
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/patrimonio")
+async def get_patrimonio(db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("SELECT activos, pasivos, patrimonio_neto FROM v_patrimonio_neto"))).first()
+    return {
+        "activos":         float(row.activos)         if row and row.activos         is not None else 0,
+        "pasivos":         float(row.pasivos)         if row and row.pasivos         is not None else 0,
+        "patrimonio_neto": float(row.patrimonio_neto) if row and row.patrimonio_neto is not None else 0,
+    }

@@ -64,6 +64,8 @@ class LLMTransactionOutput(BaseModel):
     nota: Optional[str] = None
     transaction_date: date
     confidence: float = Field(ge=0.0, le=1.0)
+    medio_pago: Optional[str] = None  # 'tarjeta_credito' | 'efectivo' | 'cuenta' | None
+    cuenta_hint: Optional[str] = None  # 'hector' | 'luisiana' | 'casa' | None
 
     @field_validator("transaction_date", mode="before")
     @classmethod

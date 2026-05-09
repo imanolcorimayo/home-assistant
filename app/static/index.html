@@ -13,22 +13,24 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      /* Aged ink palette */
-      --bg-0: #0a0908;
-      --bg-1: #13110f;
-      --bg-2: #1a1714;
-      --surface: #13110f;
-      --surface-raised: #1a1714;
+      /* Layered warm grays — visible contrast between bg and surface */
+      --bg-0: #0d0c0a;
+      --bg-1: #181613;
+      --bg-2: #221f1b;
+      --surface:        #1f1c18;
+      --surface-raised: #28241f;
+      --surface-bright: #312c26;
 
-      /* Hairlines */
-      --hairline:        rgba(244,232,208,0.07);
-      --hairline-strong: rgba(244,232,208,0.16);
-      --hairline-gold:   rgba(201,176,122,0.32);
+      /* Hairlines (more defined) */
+      --hairline:        rgba(244,232,208,0.10);
+      --hairline-strong: rgba(244,232,208,0.20);
+      --hairline-gold:   rgba(201,176,122,0.40);
 
-      /* Ink (text) — parchment cream, NOT white */
-      --ink:   #f4e8d0;
-      --ink2:  rgba(244,232,208,0.62);
-      --ink3:  rgba(244,232,208,0.36);
+      /* Ink (text) — bright cream and grays for contrast */
+      --ink-bright: #fbf5e8;
+      --ink:        #f1ead9;
+      --ink2:       #a8a195;
+      --ink3:       #706a60;
 
       /* Champagne accents */
       --champagne:       #c9b07a;
@@ -221,6 +223,7 @@
       font-size: 56px; font-weight: 300;
       letter-spacing: -0.04em; line-height: 0.95;
       margin-bottom: 12px;
+      color: var(--ink-bright);
       font-variant-numeric: tabular-nums lining-nums;
     }
     .card-sub { font-size: 12px; color: var(--ink2); letter-spacing: 0.04em; }
@@ -642,6 +645,47 @@
     </div>
   </div>
 
+  <!-- EDIT CUENTA MODAL -->
+  <div class="modal-backdrop" x-show="editCuentaDlg.show" @click.self="closeEditCuenta()" x-cloak>
+    <div class="modal modal-lg" x-show="editCuentaDlg.cuenta">
+      <h3>Editar cuenta</h3>
+      <div class="modal-form" x-show="editCuentaDlg.cuenta">
+        <div>
+          <label>Nombre</label>
+          <input class="filter-input" type="text" x-model="editCuentaDlg.cuenta.nombre">
+        </div>
+        <div>
+          <label>Tipo</label>
+          <input class="filter-input" :value="editCuentaDlg.cuenta.tipo" disabled>
+        </div>
+        <div>
+          <label>Saldo inicial €</label>
+          <input class="filter-input" type="number" step="0.01" x-model.number="editCuentaDlg.cuenta.saldo_inicial">
+        </div>
+        <div>
+          <label>Snapshot a fecha</label>
+          <input class="filter-input" type="date" x-model="editCuentaDlg.cuenta.saldo_fecha">
+        </div>
+        <template x-if="editCuentaDlg.cuenta && editCuentaDlg.cuenta.tipo === 'tarjeta_credito'">
+          <div>
+            <label>Día de cierre</label>
+            <input class="filter-input" type="number" min="1" max="31" x-model.number="editCuentaDlg.cuenta.cierre_dia">
+          </div>
+        </template>
+        <template x-if="editCuentaDlg.cuenta && editCuentaDlg.cuenta.tipo === 'tarjeta_credito'">
+          <div>
+            <label>Día de vencimiento</label>
+            <input class="filter-input" type="number" min="1" max="31" x-model.number="editCuentaDlg.cuenta.vencimiento_dia">
+          </div>
+        </template>
+      </div>
+      <div class="modal-actions">
+        <button class="form-btn-ghost" @click="closeEditCuenta()">Cancelar</button>
+        <button class="form-btn" @click="saveEditCuenta()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- EDIT MOVIMIENTO MODAL -->
   <div class="modal-backdrop" x-show="editDlg.show" @click.self="closeEdit()" x-cloak>
     <div class="modal modal-lg" x-show="editDlg.mov">
@@ -710,6 +754,7 @@
     <span class="nav-brand">SovereignBox<span class="dot"></span></span>
     <div class="nav-tabs">
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
+      <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
       <button class="nav-tab" :class="{ active: tab === 'movimientos' }" @click="switchTab('movimientos')">Movimientos</button>
       <button class="nav-tab" :class="{ active: tab === 'presupuestos' }" @click="switchTab('presupuestos')">Presupuestos</button>
       <button class="nav-tab" :class="{ active: tab === 'analisis' }" @click="switchTab('analisis')">Análisis</button>
@@ -752,6 +797,25 @@
         <div class="card-sub" x-show="!loading">
           <span class="badge" :class="balance.balance >= 0 ? 'badge-green' : 'badge-red'" x-text="balance.balance >= 0 ? 'Superávit' : 'Déficit'"></span>
         </div>
+      </div>
+    </div>
+
+    <!-- PATRIMONIO -->
+    <div class="grid-3 stagger">
+      <div class="card">
+        <div class="card-label">Activos</div>
+        <div class="card-value positive" x-text="fmt(patrimonio.activos)"></div>
+        <div class="card-sub">Cuentas + efectivo</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Pasivos</div>
+        <div class="card-value" :class="patrimonio.pasivos > 0 ? 'negative' : 'neutral'" x-text="fmt(patrimonio.pasivos)"></div>
+        <div class="card-sub">Tarjetas de crédito</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Patrimonio neto</div>
+        <div class="card-value" :class="patrimonio.patrimonio_neto >= 0 ? 'positive' : 'negative'" x-text="fmt(patrimonio.patrimonio_neto)"></div>
+        <div class="card-sub">Activos − pasivos</div>
       </div>
     </div>
 
@@ -831,16 +895,12 @@
     <!-- GASTOS PIE + RECENT MOVS -->
     <div class="grid-2">
       <div class="card">
-        <div class="section-title">Por categoría</div>
-        <p class="section-sub">Distribución del gasto variable</p>
+        <div class="section-title">Gastos variables</div>
+        <p class="section-sub">No incluye fijos · Total: <span class="num" x-text="fmt(pieTotal())"></span></p>
         <div class="chart-wrap" style="height:300px">
           <div x-show="!gastosLoading && gastosPorCat.length === 0"
                style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
             <div class="empty" style="padding:0">Sin gastos variables este mes</div>
-          </div>
-          <div class="pie-center" x-show="gastosPorCat.length > 0">
-            <div class="label">Total</div>
-            <div class="value" x-text="fmt(pieTotal())"></div>
           </div>
           <canvas id="pieChart" width="800" height="600"></canvas>
         </div>
@@ -863,6 +923,68 @@
           </div>
         </template>
       </div>
+    </div>
+  </div>
+
+  <!-- ========== CUENTAS ========== -->
+  <div class="page" :class="{ active: tab === 'cuentas' }">
+    <div class="rule-label"><span>Conti e Liquidità</span></div>
+
+    <!-- Patrimonio summary -->
+    <div class="grid-3 stagger">
+      <div class="card">
+        <div class="card-label">Activos</div>
+        <div class="card-value positive" x-text="fmt(patrimonio.activos)"></div>
+        <div class="card-sub">Suma cuentas + efectivo</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Pasivos</div>
+        <div class="card-value" :class="patrimonio.pasivos > 0 ? 'negative' : 'neutral'" x-text="fmt(patrimonio.pasivos)"></div>
+        <div class="card-sub">Deuda en tarjetas</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Patrimonio neto</div>
+        <div class="card-value" :class="patrimonio.patrimonio_neto >= 0 ? 'positive' : 'negative'" x-text="fmt(patrimonio.patrimonio_neto)"></div>
+        <div class="card-sub">Activos − pasivos</div>
+      </div>
+    </div>
+
+    <div class="card grid-full" style="margin-top:24px">
+      <div class="section-title">Cuentas</div>
+      <p class="section-sub">Saldos actuales — clic para editar saldo inicial / fecha snapshot / ciclo de tarjeta</p>
+
+      <template x-if="cuentasLoading"><div class="spinner"></div></template>
+      <template x-if="!cuentasLoading">
+        <div>
+          <template x-if="cuentas.length === 0">
+            <div class="empty">Sin cuentas</div>
+          </template>
+          <template x-for="c in cuentas" :key="c.id">
+            <div class="budget-item" style="display:flex;align-items:center;gap:14px;cursor:pointer" @click="openEditCuenta(c)">
+              <div style="flex:1">
+                <div class="budget-header">
+                  <span class="budget-name">
+                    <span x-text="c.nombre"></span>
+                    <span style="color:var(--ink3);font-weight:400;font-size:11px;margin-left:8px;text-transform:uppercase;letter-spacing:0.18em" x-text="c.tipo.replace('_',' ')"></span>
+                    <span x-show="c.miembro" style="color:var(--ink3);font-weight:400;font-size:11px;margin-left:8px" x-text="'· ' + c.miembro"></span>
+                  </span>
+                  <span class="budget-amounts">
+                    <span x-text="fmt(c.saldo_actual)"
+                          :class="c.tipo === 'tarjeta_credito' ? (c.saldo_actual > 0 ? 'negative' : 'neutral') : (c.saldo_actual >= 0 ? 'positive' : 'negative')"></span>
+                  </span>
+                </div>
+                <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;margin-top:6px">
+                  Inicial: <span x-text="fmt(c.saldo_inicial)"></span>
+                  · Snapshot: <span x-text="c.saldo_fecha"></span>
+                  <template x-if="c.tipo === 'tarjeta_credito'">
+                    <span> · Cierre día <span x-text="c.cierre_dia"></span> · Vto día <span x-text="c.vencimiento_dia"></span></span>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
     </div>
   </div>
 
@@ -1038,29 +1160,58 @@
   <script>
   const MONTHS_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-  // Italian palace palette — 7 differentiated yet warm tones (champagne, terracota,
-  // sage, acciaio ahumado, ottone, tabacco, ambra). Distinguishable in pie/bar/line
-  // without falling into SaaS rainbow.
+  // Italian palace palette — 8 brighter tones, including antique silver gray
+  // to mix grays with golds. Reads on lighter card surface.
   const GOLD_PALETTE = [
-    '#c9b07a',  // champagne
-    '#a8553a',  // terracotta
-    '#7c9e5a',  // verde olivo
-    '#5e8fa3',  // acciaio ahumado (steel blue muted)
-    '#c89e3f',  // ottone (brass)
-    '#8b6b47',  // tabacco
-    '#d4a04d',  // ambra
+    '#d4b478',  // champagne brillante
+    '#c26648',  // terracotta
+    '#9bbb6e',  // verde olivo
+    '#7eb5cc',  // acciaio (steel blue)
+    '#dca84a',  // ottone
+    '#b8b2a4',  // antique silver (gray)
+    '#e8b85c',  // ambra
+    '#9c7d57',  // tabacco
   ];
+
+  // Plugin to draw "TOTAL" + value at the geometric center of the doughnut chart area.
+  // Avoids the pie-center being misaligned because of legend space.
+  const CenterTextPlugin = {
+    id: 'centerText',
+    afterDraw(chart) {
+      const opts = chart.options.plugins?.centerText;
+      if (!opts || !opts.value) return;
+      const { ctx, chartArea } = chart;
+      if (!chartArea) return;
+      const cx = (chartArea.left + chartArea.right) / 2;
+      const cy = (chartArea.top + chartArea.bottom) / 2;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // Label
+      ctx.fillStyle = opts.labelColor || 'rgba(168,161,149,0.85)';
+      ctx.font = `600 9px 'Inter', system-ui, sans-serif`;
+      const label = (opts.label || 'TOTAL').toUpperCase();
+      // Track letter-spacing (Inter at 9px with .28em)
+      ctx.fillText(label.split('').join(' '), cx, cy - 16);
+      // Value
+      ctx.fillStyle = opts.valueColor || '#fbf5e8';
+      ctx.font = `300 30px 'Fraunces', Georgia, serif`;
+      ctx.fillText(opts.value, cx, cy + 10);
+      ctx.restore();
+    }
+  };
 
   // Chart.js global defaults — editorial dark
   if (typeof Chart !== 'undefined') {
-    Chart.defaults.color = 'rgba(244,232,208,0.85)';
+    Chart.defaults.color = 'rgba(241,234,217,0.85)';
     Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
     Chart.defaults.font.size = 11;
-    Chart.defaults.borderColor = 'rgba(244,232,208,0.10)';
+    Chart.defaults.borderColor = 'rgba(241,234,217,0.10)';
     // Disable animations entirely — was racing with resize() and producing blank canvas
     Chart.defaults.animation = false;
     Chart.defaults.animations = {};
     Chart.defaults.transitions = { active: { animation: { duration: 0 } } };
+    Chart.register(CenterTextPlugin);
   }
 
   function app() {
@@ -1081,6 +1232,11 @@
       insights: [],
       gastosFijos: [],
       gastosFijosLoading: true,
+
+      cuentas: [],
+      cuentasLoading: true,
+      patrimonio: { activos: 0, pasivos: 0, patrimonio_neto: 0 },
+      editCuentaDlg: { show: false, cuenta: null, original: null },
 
       movimientos: [],
       movsLoading: false,
@@ -1153,6 +1309,7 @@
         this.loadGastosPorCat();
         this.loadInsights();
         this.loadGastosFijos();
+        this.loadPatrimonio();
       },
 
       monthLabel() {
@@ -1171,6 +1328,10 @@
       switchTab(t) {
         this.tab = t;
         if (t === 'movimientos') this.loadMovimientos();
+        if (t === 'cuentas') {
+          this.loadCuentas();
+          this.loadPatrimonio();
+        }
         if (t === 'analisis') {
           this.loadComparativa();
           this.loadTendencia();
@@ -1382,6 +1543,46 @@
         try { this.gastosFijos = await this.api(`/gastos-fijos?anio=${this.anio}&mes=${this.mes}`); } catch(e) {}
         this.gastosFijosLoading = false;
       },
+      async loadCuentas() {
+        this.cuentasLoading = true;
+        try { this.cuentas = await this.api(`/cuentas`); } catch(e) {}
+        this.cuentasLoading = false;
+      },
+      async loadPatrimonio() {
+        try { this.patrimonio = await this.api(`/patrimonio`); } catch(e) {}
+      },
+      openEditCuenta(c) {
+        this.editCuentaDlg.original = { ...c };
+        this.editCuentaDlg.cuenta   = { ...c };
+        this.editCuentaDlg.show     = true;
+      },
+      closeEditCuenta() {
+        this.editCuentaDlg.show     = false;
+        this.editCuentaDlg.cuenta   = null;
+        this.editCuentaDlg.original = null;
+      },
+      async saveEditCuenta() {
+        const c = this.editCuentaDlg.cuenta;
+        const o = this.editCuentaDlg.original;
+        const patch = {};
+        for (const k of ['nombre','saldo_inicial','saldo_fecha','cierre_dia','vencimiento_dia']) {
+          if (c[k] !== o[k] && c[k] !== undefined && c[k] !== null && c[k] !== '') patch[k] = c[k];
+        }
+        if (Object.keys(patch).length === 0) { this.closeEditCuenta(); return; }
+        try {
+          await this.api(`/cuentas/${c.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          });
+          this.showToast('Cuenta actualizada', 'success');
+          this.closeEditCuenta();
+          await this.loadCuentas();
+          await this.loadPatrimonio();
+        } catch(e) {
+          this.showToast('Error guardando: ' + (e.message || e), 'error');
+        }
+      },
       async loadMovimientos() {
         this.movsLoading = true;
         let q = `/movimientos?anio=${this.anio}&mes=${this.mes}&limit=${this.mLimit}&offset=${this.mOffset}`;
@@ -1509,6 +1710,7 @@
         const values = this.gastosPorCat.map(g => g.total);
         const palette = labels.map((_, i) => GOLD_PALETTE[i % GOLD_PALETTE.length]);
 
+        const totalVar = values.reduce((a,b) => a+b, 0);
         this._pieChart = new Chart(ctx, {
           type: 'doughnut',
           data: {
@@ -1516,7 +1718,7 @@
             datasets: [{
               data: values,
               backgroundColor: palette,
-              borderColor: 'rgba(10,9,8,1)',
+              borderColor: '#1f1c18',
               borderWidth: 2,
               hoverOffset: 8,
             }],
@@ -1525,11 +1727,15 @@
             responsive: true, maintainAspectRatio: false,
             cutout: '72%',
             plugins: {
-              legend: { position: 'right', labels: { font: { size: 11, family: "'Inter'" }, boxWidth: 8, padding: 12, color: 'rgba(244,232,208,0.78)' } },
+              centerText: {
+                label: 'Variables',
+                value: this.fmt(totalVar),
+              },
+              legend: { position: 'right', labels: { font: { size: 11, family: "'Inter'" }, boxWidth: 8, padding: 12, color: 'rgba(241,234,217,0.85)' } },
               tooltip: {
-                backgroundColor: 'rgba(19,17,15,0.96)',
+                backgroundColor: 'rgba(24,22,19,0.97)',
                 borderColor: 'rgba(201,176,122,0.32)', borderWidth: 1,
-                titleColor: '#f4e8d0', bodyColor: 'rgba(244,232,208,0.85)',
+                titleColor: '#fbf5e8', bodyColor: 'rgba(241,234,217,0.92)',
                 padding: 12, cornerRadius: 2,
                 titleFont: { family: "'Inter'", weight: '600', size: 11 },
                 bodyFont: { family: "'JetBrains Mono'", size: 11 },
@@ -1583,23 +1789,23 @@
             plugins: {
               legend: {
                 position: 'top', align: 'end',
-                labels: { font: { size: 10, family: "'Inter'", weight: '600' }, boxWidth: 10, padding: 14, color: 'rgba(244,232,208,0.78)', usePointStyle: true, pointStyle: 'rectRounded' },
+                labels: { font: { size: 10, family: "'Inter'", weight: '600' }, boxWidth: 10, padding: 14, color: 'rgba(241,234,217,0.92)', usePointStyle: true, pointStyle: 'rectRounded' },
               },
               tooltip: {
-                backgroundColor: 'rgba(19,17,15,0.96)',
+                backgroundColor: 'rgba(24,22,19,0.97)',
                 borderColor: 'rgba(201,176,122,0.32)', borderWidth: 1,
-                titleColor: '#f4e8d0', bodyColor: 'rgba(244,232,208,0.85)',
+                titleColor: '#fbf5e8', bodyColor: 'rgba(241,234,217,0.92)',
                 padding: 12, cornerRadius: 2,
                 titleFont: { family: "'Inter'", weight: '600', size: 11 },
                 bodyFont: { family: "'JetBrains Mono'", size: 11 },
               },
             },
             scales: {
-              x: { grid: { display: false }, ticks: { font: { size: 10, family: "'Inter'", weight: '600' }, color: 'rgba(244,232,208,0.45)' } },
+              x: { grid: { display: false }, ticks: { font: { size: 10, family: "'Inter'", weight: '600' }, color: 'rgba(168,161,149,0.95)' } },
               y: {
-                grid: { color: 'rgba(244,232,208,0.04)', drawBorder: false },
+                grid: { color: 'rgba(241,234,217,0.08)', drawBorder: false },
                 ticks: {
-                  font: { size: 10, family: "'JetBrains Mono'" }, color: 'rgba(244,232,208,0.42)',
+                  font: { size: 10, family: "'JetBrains Mono'" }, color: 'rgba(168,161,149,0.95)',
                   maxTicksLimit: 5,
                   callback: v => new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',notation:'compact',maximumFractionDigits:0}).format(v)
                 }
@@ -1650,23 +1856,23 @@
             plugins: {
               legend: {
                 position: 'top', align: 'end',
-                labels: { font: { size: 10, family: "'Inter'", weight: '600' }, boxWidth: 8, padding: 14, color: 'rgba(244,232,208,0.78)', usePointStyle: true },
+                labels: { font: { size: 10, family: "'Inter'", weight: '600' }, boxWidth: 8, padding: 14, color: 'rgba(241,234,217,0.92)', usePointStyle: true },
               },
               tooltip: {
-                backgroundColor: 'rgba(19,17,15,0.96)',
+                backgroundColor: 'rgba(24,22,19,0.97)',
                 borderColor: 'rgba(201,176,122,0.32)', borderWidth: 1,
-                titleColor: '#f4e8d0', bodyColor: 'rgba(244,232,208,0.85)',
+                titleColor: '#fbf5e8', bodyColor: 'rgba(241,234,217,0.92)',
                 padding: 12, cornerRadius: 2,
                 titleFont: { family: "'Inter'", weight: '600', size: 11 },
                 bodyFont: { family: "'JetBrains Mono'", size: 11 },
               },
             },
             scales: {
-              x: { grid: { display: false }, ticks: { font: { size: 10, family: "'Inter'" }, color: 'rgba(244,232,208,0.45)' } },
+              x: { grid: { display: false }, ticks: { font: { size: 10, family: "'Inter'" }, color: 'rgba(168,161,149,0.95)' } },
               y: {
-                grid: { color: 'rgba(244,232,208,0.04)', drawBorder: false },
+                grid: { color: 'rgba(241,234,217,0.08)', drawBorder: false },
                 ticks: {
-                  font: { size: 10, family: "'JetBrains Mono'" }, color: 'rgba(244,232,208,0.42)',
+                  font: { size: 10, family: "'JetBrains Mono'" }, color: 'rgba(168,161,149,0.95)',
                   maxTicksLimit: 5,
                   callback: v => new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',notation:'compact',maximumFractionDigits:0}).format(v)
                 }
