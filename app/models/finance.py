@@ -57,6 +57,25 @@ class Account(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class Loan(Base):
+    __tablename__ = "loans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    nombre: Mapped[str] = mapped_column(Text, nullable=False)
+    cuenta_pago_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    monto_cuota: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    dia_vencimiento: Mapped[int] = mapped_column(nullable=False)
+    fecha_inicio: Mapped[date] = mapped_column(Date, nullable=False)
+    fecha_fin: Mapped[date] = mapped_column(Date, nullable=False)
+    monto_ultima_cuota: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
+    notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    activo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -66,6 +85,9 @@ class Transaction(Base):
     )
     account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False
+    )
+    loan_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("loans.id"), nullable=True
     )
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
     fecha_valor: Mapped[date] = mapped_column(Date, nullable=False)

@@ -109,7 +109,9 @@ services:
       dockerfile: app/Dockerfile
     container_name: sovereignbox_worker
     # Misma imagen que el API, distinto comando
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1
+    # --beat embebido evita un servicio extra (RAM-friendly).
+    # --schedule en /tmp para que el archivo persista durante la vida del contenedor.
+    command: celery -A app.workers.celery_app worker --beat --loglevel=info --concurrency=1 --schedule=/tmp/celerybeat-schedule
     volumes:
       - media_data:/app/data/files
     environment:

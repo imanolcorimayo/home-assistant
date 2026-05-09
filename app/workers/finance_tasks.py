@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.core.database import SyncSessionLocal
 from app.models.finance import Transaction
 from app.schemas.finance import LLMTransactionListOutput, LLMTransactionOutput
-from app.services import ollama_client, telegram_client, whisper_client
+from app.services import loan_generator, ollama_client, telegram_client, whisper_client
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,15 @@ def process_text_message(self, text: str, chat_id: int, user_id: str) -> None:
                 {"text": "✗ Cancelar", "callback_data": "cancel"},
             ]],
         )
+
+
+@celery_app.task(name="app.workers.finance_tasks.generate_loan_installments")
+def generate_loan_installments() -> int:
+    """Beat-scheduled: genera cuotas de préstamos vencidas hoy. Idempotente."""
+    created = loan_generator.generate_due_installments()
+    if created:
+        logger.info("Cuotas de préstamos generadas: %d", len(created))
+    return len(created)
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=5)

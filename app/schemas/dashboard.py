@@ -27,3 +27,26 @@ class CuentaUpdate(BaseModel):
     cierre_dia: Optional[int] = Field(default=None, ge=1, le=31)
     vencimiento_dia: Optional[int] = Field(default=None, ge=1, le=31)
     activa: Optional[bool] = None
+
+
+class PrestamoIn(BaseModel):
+    nombre: str = Field(min_length=1, max_length=80)
+    cuenta_pago_id: str
+    monto_cuota: float = Field(gt=0)
+    dia_vencimiento: int = Field(ge=1, le=31)
+    fecha_inicio: date
+    fecha_fin: date
+    monto_ultima_cuota: Optional[float] = Field(default=None, gt=0)
+    notas: Optional[str] = Field(default=None, max_length=500)
+
+
+class PrestamoUpdate(BaseModel):
+    nombre: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    cuenta_pago_id: Optional[str] = None
+    monto_cuota: Optional[float] = Field(default=None, gt=0)
+    dia_vencimiento: Optional[int] = Field(default=None, ge=1, le=31)
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+    monto_ultima_cuota: Optional[float] = Field(default=None, gt=0)
+    notas: Optional[str] = Field(default=None, max_length=500)
+    activo: Optional[bool] = None

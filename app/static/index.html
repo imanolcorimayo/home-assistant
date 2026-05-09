@@ -686,6 +686,58 @@
     </div>
   </div>
 
+  <!-- EDIT PRESTAMO MODAL -->
+  <div class="modal-backdrop" x-show="editPrestamoDlg.show" @click.self="closeEditPrestamo()" x-cloak>
+    <div class="modal modal-lg" x-show="editPrestamoDlg.prestamo">
+      <h3 x-text="editPrestamoDlg.isNew ? 'Nuevo préstamo' : 'Editar préstamo'"></h3>
+      <div class="modal-form" x-show="editPrestamoDlg.prestamo">
+        <div class="full">
+          <label>Nombre</label>
+          <input class="filter-input" type="text" x-model="editPrestamoDlg.prestamo.nombre" placeholder="ej. Préstamo casa">
+        </div>
+        <div>
+          <label>Cuenta de débito</label>
+          <select class="filter-input" x-model="editPrestamoDlg.prestamo.cuenta_pago_id">
+            <template x-for="c in cuentas.filter(c => c.tipo === 'corriente')" :key="c.id">
+              <option :value="c.id" x-text="c.nombre"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label>Cuota mensual €</label>
+          <input class="filter-input" type="number" step="0.01" min="0.01" x-model.number="editPrestamoDlg.prestamo.monto_cuota">
+        </div>
+        <div>
+          <label>Día vto</label>
+          <input class="filter-input" type="number" min="1" max="31" x-model.number="editPrestamoDlg.prestamo.dia_vencimiento">
+        </div>
+        <div>
+          <label>Fecha 1ª cuota</label>
+          <input class="filter-input" type="date" x-model="editPrestamoDlg.prestamo.fecha_inicio">
+        </div>
+        <div>
+          <label>Fecha última cuota</label>
+          <input class="filter-input" type="date" x-model="editPrestamoDlg.prestamo.fecha_fin">
+        </div>
+        <div>
+          <label>Última cuota distinta € <span style="color:var(--ink3);font-weight:400">(opcional)</span></label>
+          <input class="filter-input" type="number" step="0.01" min="0.01" x-model.number="editPrestamoDlg.prestamo.monto_ultima_cuota">
+        </div>
+        <div class="full">
+          <label>Notas</label>
+          <input class="filter-input" type="text" x-model="editPrestamoDlg.prestamo.notas">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <template x-if="!editPrestamoDlg.isNew">
+          <button class="form-btn-del" @click="deletePrestamo(editPrestamoDlg.prestamo)">Eliminar</button>
+        </template>
+        <button class="form-btn-ghost" @click="closeEditPrestamo()">Cancelar</button>
+        <button class="form-btn" @click="savePrestamo()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- EDIT MOVIMIENTO MODAL -->
   <div class="modal-backdrop" x-show="editDlg.show" @click.self="closeEdit()" x-cloak>
     <div class="modal modal-lg" x-show="editDlg.mov">
@@ -755,6 +807,7 @@
     <div class="nav-tabs">
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
       <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
+      <button class="nav-tab" :class="{ active: tab === 'prestamos' }" @click="switchTab('prestamos')">Préstamos</button>
       <button class="nav-tab" :class="{ active: tab === 'movimientos' }" @click="switchTab('movimientos')">Movimientos</button>
       <button class="nav-tab" :class="{ active: tab === 'presupuestos' }" @click="switchTab('presupuestos')">Presupuestos</button>
       <button class="nav-tab" :class="{ active: tab === 'analisis' }" @click="switchTab('analisis')">Análisis</button>
@@ -980,6 +1033,73 @@
                     <span> · Cierre día <span x-text="c.cierre_dia"></span> · Vto día <span x-text="c.vencimiento_dia"></span></span>
                   </template>
                 </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========== PRÉSTAMOS ========== -->
+  <div class="page" :class="{ active: tab === 'prestamos' }">
+    <div class="rule-label"><span>Prestiti e Finanziamenti</span></div>
+
+    <!-- Resumen -->
+    <div class="grid-3 stagger">
+      <div class="card">
+        <div class="card-label">Préstamos activos</div>
+        <div class="card-value" x-text="prestamos.length"></div>
+        <div class="card-sub">En curso</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Cuota mensual</div>
+        <div class="card-value" :class="prestamosCuotaTotal() > 0 ? 'negative' : 'neutral'" x-text="fmt(prestamosCuotaTotal())"></div>
+        <div class="card-sub">Total débito mensual</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Saldo pendiente</div>
+        <div class="card-value" :class="prestamosSaldoTotal() > 0 ? 'negative' : 'neutral'" x-text="fmt(prestamosSaldoTotal())"></div>
+        <div class="card-sub">Total a pagar</div>
+      </div>
+    </div>
+
+    <div class="card grid-full" style="margin-top:24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div>
+          <div class="section-title">Préstamos</div>
+          <p class="section-sub" style="margin:0">Las cuotas se generan automáticamente el día de vencimiento</p>
+        </div>
+        <button class="form-btn" @click="openNewPrestamo()">+ Nuevo</button>
+      </div>
+
+      <template x-if="prestamosLoading"><div class="spinner"></div></template>
+      <template x-if="!prestamosLoading">
+        <div>
+          <template x-if="prestamos.length === 0">
+            <div class="empty">Sin préstamos activos</div>
+          </template>
+          <template x-for="p in prestamos" :key="p.id">
+            <div class="budget-item" style="cursor:pointer" @click="openEditPrestamo(p)">
+              <div class="budget-header">
+                <span class="budget-name">
+                  <span x-text="p.nombre"></span>
+                  <span style="color:var(--ink3);font-weight:400;font-size:11px;margin-left:8px;text-transform:uppercase;letter-spacing:0.18em" x-text="'Día ' + p.dia_vencimiento"></span>
+                </span>
+                <div style="display:flex;align-items:center;gap:14px">
+                  <span class="budget-amounts" x-text="fmt(p.monto_cuota) + '/mes'"></span>
+                  <span class="badge badge-yellow" x-text="p.cuotas_restantes + ' / ' + p.cuotas_total"></span>
+                </div>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill bar-gold"
+                     :style="'width:'+(p.cuotas_total > 0 ? ((p.cuotas_total - p.cuotas_restantes)/p.cuotas_total*100) : 0)+'%'"></div>
+              </div>
+              <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;margin-top:8px">
+                <span x-text="'Pendiente: ' + fmt(p.saldo_pendiente)"></span>
+                · <span x-text="'Hasta ' + p.fecha_fin"></span>
+                · <span x-text="'Débito desde: ' + p.cuenta_pago_nombre"></span>
+                <template x-if="p.notas"><span> · <span x-text="p.notas" style="color:var(--ink2)"></span></span></template>
               </div>
             </div>
           </template>
@@ -1238,6 +1358,10 @@
       patrimonio: { activos: 0, pasivos: 0, patrimonio_neto: 0 },
       editCuentaDlg: { show: false, cuenta: null, original: null },
 
+      prestamos: [],
+      prestamosLoading: true,
+      editPrestamoDlg: { show: false, prestamo: null, original: null, isNew: false },
+
       movimientos: [],
       movsLoading: false,
       movsTotal: 0,
@@ -1331,6 +1455,10 @@
         if (t === 'cuentas') {
           this.loadCuentas();
           this.loadPatrimonio();
+        }
+        if (t === 'prestamos') {
+          this.loadPrestamos();
+          if (this.cuentas.length === 0) this.loadCuentas();
         }
         if (t === 'analisis') {
           this.loadComparativa();
@@ -1581,6 +1709,92 @@
           await this.loadPatrimonio();
         } catch(e) {
           this.showToast('Error guardando: ' + (e.message || e), 'error');
+        }
+      },
+
+      // ───── Préstamos ─────
+      prestamosCuotaTotal() { return this.prestamos.reduce((a,p) => a + (p.monto_cuota || 0), 0); },
+      prestamosSaldoTotal() { return this.prestamos.reduce((a,p) => a + (p.saldo_pendiente || 0), 0); },
+      async loadPrestamos() {
+        this.prestamosLoading = true;
+        try { this.prestamos = await this.api(`/prestamos`); } catch(e) {}
+        this.prestamosLoading = false;
+      },
+      openNewPrestamo() {
+        const cuentaCorr = this.cuentas.find(c => c.tipo === 'corriente');
+        this.editPrestamoDlg.isNew    = true;
+        this.editPrestamoDlg.original = null;
+        this.editPrestamoDlg.prestamo = {
+          nombre: '',
+          cuenta_pago_id: cuentaCorr ? cuentaCorr.id : '',
+          monto_cuota: 0,
+          dia_vencimiento: 15,
+          fecha_inicio: new Date().toISOString().slice(0,10),
+          fecha_fin: '',
+          monto_ultima_cuota: null,
+          notas: '',
+        };
+        this.editPrestamoDlg.show = true;
+      },
+      openEditPrestamo(p) {
+        this.editPrestamoDlg.isNew    = false;
+        this.editPrestamoDlg.original = { ...p };
+        this.editPrestamoDlg.prestamo = { ...p };
+        this.editPrestamoDlg.show     = true;
+      },
+      closeEditPrestamo() {
+        this.editPrestamoDlg.show     = false;
+        this.editPrestamoDlg.prestamo = null;
+        this.editPrestamoDlg.original = null;
+      },
+      async savePrestamo() {
+        const p = this.editPrestamoDlg.prestamo;
+        try {
+          if (this.editPrestamoDlg.isNew) {
+            const body = {
+              nombre: p.nombre, cuenta_pago_id: p.cuenta_pago_id,
+              monto_cuota: p.monto_cuota, dia_vencimiento: p.dia_vencimiento,
+              fecha_inicio: p.fecha_inicio, fecha_fin: p.fecha_fin,
+            };
+            if (p.monto_ultima_cuota) body.monto_ultima_cuota = p.monto_ultima_cuota;
+            if (p.notas)              body.notas              = p.notas;
+            await this.api(`/prestamo`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            this.showToast('Préstamo creado', 'success');
+          } else {
+            const o = this.editPrestamoDlg.original;
+            const patch = {};
+            for (const k of ['nombre','cuenta_pago_id','monto_cuota','dia_vencimiento','fecha_inicio','fecha_fin','monto_ultima_cuota','notas']) {
+              if (p[k] !== o[k]) patch[k] = p[k];
+            }
+            if (Object.keys(patch).length === 0) { this.closeEditPrestamo(); return; }
+            await this.api(`/prestamo/${p.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(patch),
+            });
+            this.showToast('Préstamo actualizado', 'success');
+          }
+          this.closeEditPrestamo();
+          await this.loadPrestamos();
+          await this.loadInsights();
+        } catch(e) {
+          this.showToast('Error: ' + (e.message || e), 'error');
+        }
+      },
+      async deletePrestamo(p) {
+        const ok = await this.confirm(`¿Eliminar "${p.nombre}"? Las cuotas ya generadas se conservan.`, { title: 'Eliminar préstamo', okLabel: 'Eliminar' });
+        if (!ok) return;
+        try {
+          await this.api(`/prestamo/${p.id}`, { method: 'DELETE' });
+          this.showToast('Préstamo eliminado', 'success');
+          this.closeEditPrestamo();
+          await this.loadPrestamos();
+        } catch(e) {
+          this.showToast('Error: ' + (e.message || e), 'error');
         }
       },
       async loadMovimientos() {

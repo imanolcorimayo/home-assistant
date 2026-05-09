@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.schemas.dashboard import CuentaUpdate, MovimientoUpdate, PresupuestoIn
+from app.schemas.dashboard import CuentaUpdate, MovimientoUpdate, PrestamoIn, PrestamoUpdate, PresupuestoIn
 
 router = APIRouter()
 
@@ -558,6 +558,27 @@ async def get_insights(
             "trend": "up",
         })
 
+    prestamos = (await db.execute(
+        text("""
+            SELECT
+                COUNT(*) AS n,
+                SUM(cuotas_restantes * monto_cuota) AS pendiente,
+                SUM(cuotas_restantes * monto_cuota) FILTER (WHERE TRUE) AS _,
+                SUM(monto_cuota) AS cuota_mensual
+            FROM v_loans_status
+            WHERE activo AND cuotas_restantes > 0
+        """),
+    )).first()
+    if prestamos and prestamos.n and int(prestamos.n) > 0:
+        pendiente = float(prestamos.pendiente or 0)
+        mensual   = float(prestamos.cuota_mensual or 0)
+        insights.append({
+            "kind": "prestamos",
+            "icon": "🏦",
+            "title": "Préstamos activos",
+            "text": f"{int(prestamos.n)} en curso · €{mensual:,.0f}/mes · €{pendiente:,.0f} pendientes",
+        })
+
     return insights
 
 
@@ -628,3 +649,95 @@ async def get_patrimonio(db: AsyncSession = Depends(get_db)):
         "pasivos":         float(row.pasivos)         if row and row.pasivos         is not None else 0,
         "patrimonio_neto": float(row.patrimonio_neto) if row and row.patrimonio_neto is not None else 0,
     }
+
+
+# ─────────────────────────────────────────────────────────────────
+# Préstamos
+# ─────────────────────────────────────────────────────────────────
+
+def _row_to_prestamo(r) -> dict:
+    cuotas_restantes = int(r.cuotas_restantes)
+    monto_cuota = float(r.monto_cuota)
+    monto_ult = float(r.monto_ultima_cuota) if r.monto_ultima_cuota is not None else None
+    if monto_ult is not None and cuotas_restantes >= 1:
+        saldo_pendiente = (cuotas_restantes - 1) * monto_cuota + monto_ult
+    else:
+        saldo_pendiente = cuotas_restantes * monto_cuota
+    return {
+        "id": str(r.id),
+        "nombre": r.nombre,
+        "cuenta_pago_id": str(r.cuenta_pago_id),
+        "cuenta_pago_nombre": r.cuenta_pago_nombre,
+        "monto_cuota": monto_cuota,
+        "monto_ultima_cuota": monto_ult,
+        "dia_vencimiento": r.dia_vencimiento,
+        "fecha_inicio": r.fecha_inicio.isoformat() if r.fecha_inicio else None,
+        "fecha_fin": r.fecha_fin.isoformat() if r.fecha_fin else None,
+        "notas": r.notas,
+        "activo": r.activo,
+        "cuotas_total": int(r.cuotas_total),
+        "cuotas_restantes": cuotas_restantes,
+        "cuotas_generadas": int(r.cuotas_generadas),
+        "saldo_pendiente": round(saldo_pendiente, 2),
+    }
+
+
+@router.get("/prestamos")
+async def get_prestamos(db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        text("SELECT * FROM v_loans_status WHERE activo ORDER BY fecha_fin")
+    )).all()
+    return [_row_to_prestamo(r) for r in rows]
+
+
+@router.post("/prestamo")
+async def create_prestamo(payload: PrestamoIn, db: AsyncSession = Depends(get_db)):
+    if payload.fecha_fin < payload.fecha_inicio:
+        raise HTTPException(400, "fecha_fin debe ser >= fecha_inicio")
+    result = await db.execute(
+        text("""
+            INSERT INTO loans (nombre, cuenta_pago_id, monto_cuota, dia_vencimiento,
+                               fecha_inicio, fecha_fin, monto_ultima_cuota, notas)
+            VALUES (:nombre, :cpi, :mc, :dv, :fi, :ff, :muc, :notas)
+            RETURNING id
+        """),
+        {
+            "nombre": payload.nombre, "cpi": payload.cuenta_pago_id,
+            "mc": payload.monto_cuota, "dv": payload.dia_vencimiento,
+            "fi": payload.fecha_inicio, "ff": payload.fecha_fin,
+            "muc": payload.monto_ultima_cuota, "notas": payload.notas,
+        },
+    )
+    new_id = result.scalar()
+    await db.commit()
+    return {"id": str(new_id)}
+
+
+@router.patch("/prestamo/{loan_id}")
+async def update_prestamo(loan_id: str, payload: PrestamoUpdate, db: AsyncSession = Depends(get_db)):
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(400, "Sin cambios")
+    sets = ", ".join(f"{k} = :{k}" for k in fields)
+    fields["id"] = loan_id
+    result = await db.execute(
+        text(f"UPDATE loans SET {sets}, updated_at = now() WHERE id = :id RETURNING id"),
+        fields,
+    )
+    if not result.first():
+        raise HTTPException(404, "Préstamo no encontrado")
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/prestamo/{loan_id}")
+async def delete_prestamo(loan_id: str, db: AsyncSession = Depends(get_db)):
+    """Soft-delete: marca activo=false. Las cuotas ya generadas se conservan."""
+    result = await db.execute(
+        text("UPDATE loans SET activo = false, updated_at = now() WHERE id = :id RETURNING id"),
+        {"id": loan_id},
+    )
+    if not result.first():
+        raise HTTPException(404, "Préstamo no encontrado")
+    await db.commit()
+    return {"ok": True}

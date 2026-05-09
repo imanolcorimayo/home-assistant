@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from app.core.config import settings
 
@@ -19,4 +20,13 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
+    # Schedule: día 15 a las 06:00 Europe/Rome generamos las cuotas del mes.
+    # La task es idempotente, así que correrla 1 vez/día (a las 06:00) cubre catch-up
+    # si el worker estuvo caído un día.
+    beat_schedule={
+        "generate-loan-installments": {
+            "task": "app.workers.finance_tasks.generate_loan_installments",
+            "schedule": crontab(hour=6, minute=0),
+        },
+    },
 )
