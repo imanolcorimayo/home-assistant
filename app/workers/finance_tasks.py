@@ -31,6 +31,80 @@ _PENDING_TX_TTL = 300
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=120, time_limit=180)
+def process_task_message(self, text_msg: str, chat_id: int, user_id: str) -> None:
+    """Extrae tareas del texto vía LLM y las inserta en `tasks`.
+
+    Asignación: si el LLM detecta "@lu" o "@hector", se mapea al family_member
+    correspondiente. Si no, queda asignado_to=NULL (cualquiera) salvo que el
+    autor sea claro (un solo usuario habla → asigna al autor).
+    """
+    tareas = ollama_client.extract_tasks(text_msg)
+    if not tareas:
+        telegram_client.send_message_sync(chat_id, "🤔 No reconocí ninguna tarea.")
+        return
+
+    # Mapear nombres → UUIDs
+    with SyncSessionLocal() as db:
+        miembros = db.execute(sa_text(
+            "SELECT id, lower(full_name) AS nombre, telegram_user_id FROM family_members WHERE is_active"
+        )).all()
+    name_to_id: dict[str, str] = {}
+    for m in miembros:
+        nombre = m.nombre or ""
+        if "hector" in nombre:
+            name_to_id["hector"] = str(m.id)
+        if "luisiana" in nombre:
+            name_to_id["luisiana"] = str(m.id)
+
+    creadas = []
+    with SyncSessionLocal() as db:
+        for t in tareas:
+            asignado_id = None
+            asignado_key = (t.get("asignado") or "").lower() if t.get("asignado") else ""
+            if asignado_key in name_to_id:
+                asignado_id = name_to_id[asignado_key]
+            elif asignado_key == "":
+                # Sin asignación explícita: la deja sin asignar (familiar)
+                asignado_id = None
+
+            due = t.get("due_date")
+            due_dt = None
+            if due:
+                try:
+                    from datetime import datetime as _dt
+                    due_dt = _dt.fromisoformat(due + "T18:00:00")
+                except Exception:
+                    due_dt = None
+
+            r = db.execute(sa_text("""
+                INSERT INTO tasks (title, assigned_to, due_datetime, prioridad,
+                                    task_status, created_by)
+                VALUES (:t, :a, :dd, :p, 'pendiente', :cb)
+                RETURNING id, title, prioridad, assigned_to
+            """), {
+                "t": t["titulo"], "a": asignado_id, "dd": due_dt,
+                "p": t["prioridad"], "cb": uuid.UUID(user_id),
+            }).first()
+            creadas.append(r)
+        db.commit()
+
+    if not creadas:
+        telegram_client.send_message_sync(chat_id, "🤔 No pude guardar las tareas.")
+        return
+
+    # Construir mapa id→nombre para el output
+    id_to_name = {str(m.id): (m.nombre.title() if m.nombre else "?") for m in miembros}
+
+    icon = {"alta": "🔴", "normal": "⚪", "baja": "🔵"}
+    lines = [f"✅ Tarea{'s' if len(creadas)!=1 else ''} agregada{'s' if len(creadas)!=1 else ''} ({len(creadas)}):"]
+    for r in creadas:
+        ico = icon.get(r.prioridad, "⚪")
+        asg = id_to_name.get(str(r.assigned_to), "cualquiera") if r.assigned_to else "cualquiera"
+        lines.append(f"  {ico} {r.title} · @{asg}")
+    telegram_client.send_message_sync(chat_id, "\n".join(lines))
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=120, time_limit=180)
 def process_event_message(self, text_msg: str, chat_id: int, user_id: str) -> None:
     """Extrae eventos del texto vía LLM y los inserta en events.
 

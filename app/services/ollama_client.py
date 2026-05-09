@@ -352,6 +352,90 @@ def extract_events(text: str) -> list[dict]:
         return []
 
 
+_TASK_PROMPT = """\
+Sos un asistente que organiza una lista de tareas (TODO) familiar. El usuario
+te dicta una o más tareas en español. Devuelve EXCLUSIVAMENTE un JSON:
+
+{{
+  "tareas": [
+    {{
+      "titulo": "<verbo + objeto, breve, ej. 'Reparar canilla'>",
+      "prioridad": "baja|normal|alta",
+      "asignado": "hector|luisiana|null",
+      "due_date": "YYYY-MM-DD" o null
+    }}
+  ]
+}}
+
+Reglas:
+- Convertir "tengo que X" / "hay que X" en "X" verbo en infinitivo capitalizado.
+- "@hector" o "@he" → asignado: "hector"
+- "@luisiana" o "@lu" → asignado: "luisiana"
+- Sin mención: asignado: null (cualquiera).
+- "urgente", "ya", "ASAP" → prioridad: "alta"; resto "normal".
+- Si menciona fecha (mañana, lunes, el 20): due_date. Sin fecha: null.
+
+Hoy es {today}.
+
+Ejemplos:
+- "tengo que reparar la canilla"          → [{{"titulo":"Reparar canilla","prioridad":"normal","asignado":null,"due_date":null}}]
+- "@lu llevar libros a la biblioteca"     → [{{"titulo":"Llevar libros a la biblioteca","prioridad":"normal","asignado":"luisiana","due_date":null}}]
+- "urgente llamar al gas"                 → [{{"titulo":"Llamar al gas","prioridad":"alta","asignado":null,"due_date":null}}]
+- "comprar pilas, sacar la basura"        → [{{"titulo":"Comprar pilas","prioridad":"normal","asignado":null,"due_date":null}},
+                                              {{"titulo":"Sacar la basura","prioridad":"normal","asignado":null,"due_date":null}}]
+
+Si no hay tareas: {{"tareas": []}}.
+
+Mensaje: "{text}"
+JSON:
+"""
+
+
+def extract_tasks(text: str) -> list[dict]:
+    """Extrae tareas del texto. Devuelve lista de dicts."""
+    today = date.today()
+    prompt = _TASK_PROMPT.format(text=text, today=today.isoformat())
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{settings.ollama_url}/api/generate",
+                json={
+                    "model": settings.ollama_model,
+                    "prompt": prompt,
+                    "format": "json",
+                    "stream": False,
+                    "keep_alive": "5m",
+                    "options": {"num_ctx": 1024, "num_predict": 256, "temperature": 0.1},
+                },
+            )
+            resp.raise_for_status()
+        data = json.loads(resp.json()["response"])
+        tareas = data.get("tareas", []) if isinstance(data, dict) else []
+        cleaned = []
+        for t in tareas:
+            if not isinstance(t, dict):
+                continue
+            titulo = (t.get("titulo") or "").strip()
+            if not titulo:
+                continue
+            prio = t.get("prioridad", "normal")
+            if prio not in {"baja", "normal", "alta"}:
+                prio = "normal"
+            asignado = t.get("asignado")
+            if asignado in ("null", "", None):
+                asignado = None
+            cleaned.append({
+                "titulo":    titulo[:500],
+                "prioridad": prio,
+                "asignado":  asignado,
+                "due_date":  t.get("due_date") or None,
+            })
+        return cleaned
+    except Exception as exc:
+        logger.warning("extract_tasks falló: %s", exc)
+        return []
+
+
 def warm_up() -> None:
     """Pre-carga el modelo de Ollama en RAM para evitar el cold start de la 1ª dictada.
 

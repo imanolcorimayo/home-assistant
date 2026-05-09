@@ -1081,6 +1081,7 @@
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
       <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
       <button class="nav-tab" :class="{ active: tab === 'agenda' }" @click="switchTab('agenda')">Agenda</button>
+      <button class="nav-tab" :class="{ active: tab === 'tareas' }" @click="switchTab('tareas')">Tareas</button>
       <button class="nav-tab" :class="{ active: tab === 'compras' }" @click="switchTab('compras')">Compras</button>
       <button class="nav-tab" :class="{ active: tab === 'pendientes' }" @click="switchTab('pendientes')">Pendientes</button>
       <button class="nav-tab" :class="{ active: tab === 'tarjeta' }" @click="switchTab('tarjeta')">Tarjeta</button>
@@ -1376,6 +1377,68 @@
                   </template>
                 </div>
               </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========== TAREAS ========== -->
+  <div class="page" :class="{ active: tab === 'tareas' }">
+    <div class="rule-label"><span>Lista delle Cose</span></div>
+
+    <div class="card grid-full">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input class="filter-input" type="text" x-model="newTarea"
+               @keydown.enter="addTarea()" style="flex:1;min-width:200px"
+               placeholder="ej. reparar canilla / urgente llamar al gas / @lu llevar libros">
+        <select class="filter-input" x-model="taskFilter.asignado" @change="loadTareas()" style="width:auto">
+          <option value="todas">Todos</option>
+          <option value="hector">Solo Hector</option>
+          <option value="luisiana">Solo Luisiana</option>
+          <option value="sin_asignar">Sin asignar</option>
+        </select>
+        <select class="filter-input" x-model="taskFilter.estado" @change="loadTareas()" style="width:auto">
+          <option value="pendiente">Pendientes</option>
+          <option value="completada">Completadas</option>
+          <option value="todos">Todos</option>
+        </select>
+        <button class="form-btn" @click="addTarea()">+ Agregar</button>
+      </div>
+      <p class="section-sub" style="margin-top:8px">Agregá rápido o usá el LLM con "@lu" o "urgente" para asignar y priorizar.</p>
+    </div>
+
+    <!-- Agrupado por prioridad -->
+    <div class="card grid-full" style="margin-top:24px">
+      <template x-if="tareas.length === 0">
+        <div class="empty">Sin tareas en este filtro</div>
+      </template>
+      <template x-for="prio in ['alta','normal','baja']" :key="prio">
+        <div x-show="tareasByPrioridad(prio).length > 0" style="margin-bottom:18px">
+          <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.24em;font-weight:600;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--hairline-strong)"
+               x-text="(prio === 'alta' ? '🔴 ' : prio === 'baja' ? '🔵 ' : '⚪ ') + prio.toUpperCase()"></div>
+          <template x-for="t in tareasByPrioridad(prio)" :key="t.id">
+            <div style="display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--hairline)">
+              <button @click="toggleTarea(t)" :title="t.task_status === 'completada' ? 'Desmarcar' : 'Marcar completada'"
+                      style="background:transparent;border:1px solid var(--hairline-strong);width:24px;height:24px;border-radius:50%;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center"
+                      :style="t.task_status === 'completada' ? 'background: var(--champagne); border-color: var(--champagne)' : ''">
+                <span x-show="t.task_status === 'completada'" style="font-size:12px;color:var(--bg-0)">✓</span>
+              </button>
+              <div style="flex:1;min-width:0">
+                <div :style="t.task_status === 'completada' ? 'text-decoration:line-through;opacity:0.55' : ''"
+                     style="font-size:14px;font-weight:500;color:var(--ink-bright)" x-text="t.title"></div>
+                <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:4px">
+                  <span x-text="t.assigned_name ? '@' + t.assigned_name.split(' ')[0].toLowerCase() : 'cualquiera'"></span>
+                  <template x-if="t.due_datetime"><span> · vto <span x-text="t.due_datetime.slice(0,10)"></span></span></template>
+                </div>
+              </div>
+              <select class="filter-input" x-model="t.prioridad" @change="changePrioridad(t)" style="width:auto;font-size:11px">
+                <option value="alta">Alta</option>
+                <option value="normal">Normal</option>
+                <option value="baja">Baja</option>
+              </select>
+              <button class="row-btn danger" @click="deleteTarea(t)" title="Eliminar">✕</button>
             </div>
           </template>
         </div>
@@ -2056,6 +2119,11 @@
       agendaRange: '14',
       eventDlg: { show: false, isNew: true, data: {} },
 
+      // Tareas
+      tareas: [],
+      newTarea: '',
+      taskFilter: { asignado: 'todas', estado: 'pendiente' },
+
       // Lista de compras
       compras: [],
       newCompra: '',
@@ -2188,6 +2256,9 @@
         if (t === 'agenda') {
           this.loadEventos();
         }
+        if (t === 'tareas') {
+          this.loadTareas();
+        }
         if (t === 'analisis') {
           this.loadComparativa();
           this.loadTendencia();
@@ -2207,6 +2278,73 @@
       async loadSalud() {
         try { this.salud = await this.api(`/salud-financiera`); } catch(e) {}
       },
+      // ───── Tareas ─────
+      tareasByPrioridad(p) {
+        return this.tareas.filter(t => t.prioridad === p);
+      },
+      async loadTareas() {
+        let q = `/tareas?estado=${this.taskFilter.estado}`;
+        if (this.taskFilter.asignado === 'hector')   q += `&asignado=d2f54e45-1167-46b4-85f4-d09d4b6d1c05`;
+        else if (this.taskFilter.asignado === 'luisiana') q += `&asignado=8f0552a0-cb17-47d6-bd74-0cb2b9df30ca`;
+        else if (this.taskFilter.asignado === 'sin_asignar') q += `&asignado=sin_asignar`;
+        try { this.tareas = await this.api(q); } catch(e) {}
+      },
+      async addTarea() {
+        const txt = (this.newTarea || '').trim();
+        if (!txt) return;
+        // Detectar @lu / @he para asignación rápida sin LLM
+        let asignado_to = null;
+        let title = txt;
+        const matchLu = title.match(/@lu(?:isiana)?\b/i);
+        const matchHe = title.match(/@(?:he(?:ctor)?)\b/i);
+        if (matchLu) {
+          asignado_to = '8f0552a0-cb17-47d6-bd74-0cb2b9df30ca';
+          title = title.replace(matchLu[0], '').trim();
+        } else if (matchHe) {
+          asignado_to = 'd2f54e45-1167-46b4-85f4-d09d4b6d1c05';
+          title = title.replace(matchHe[0], '').trim();
+        }
+        const prioridad = /\b(urgente|asap|ya|cuanto antes)\b/i.test(title) ? 'alta' : 'normal';
+        title = title.replace(/\b(urgente|asap|cuanto antes)\b/i, '').trim();
+        if (!title) return;
+        try {
+          const body = { title, prioridad };
+          if (asignado_to) body.assigned_to = asignado_to;
+          await this.api(`/tarea`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          this.newTarea = '';
+          await this.loadTareas();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async toggleTarea(t) {
+        const path = t.task_status === 'completada' ? 'undo' : 'done';
+        try {
+          await this.api(`/tarea/${t.id}/${path}`, { method: 'PATCH' });
+          await this.loadTareas();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async changePrioridad(t) {
+        try {
+          await this.api(`/tarea/${t.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prioridad: t.prioridad }),
+          });
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async deleteTarea(t) {
+        const ok = await this.confirm(`¿Eliminar "${t.title}"?`,
+                                       { title: 'Eliminar tarea', okLabel: 'Eliminar' });
+        if (!ok) return;
+        try {
+          await this.api(`/tarea/${t.id}`, { method: 'DELETE' });
+          await this.loadTareas();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+
       // ───── Agenda ─────
       iconoCategoria(c) {
         return { medico: '🏥', colegio: '🏫', burocracia: '📋', familia: '👨‍👩‍👧', otro: '📅' }[c] || '📅';

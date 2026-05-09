@@ -78,6 +78,29 @@ class InstallmentPlan(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    assigned_to: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True
+    )
+    due_datetime: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    task_status: Mapped[str] = mapped_column(Text, nullable=False, default="pendiente")
+    prioridad: Mapped[str] = mapped_column(Text, nullable=False, default="normal")
+    recurrence: Mapped[str] = mapped_column(Text, nullable=False, default="none")
+    reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    llm_raw_output: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class Event(Base):
     __tablename__ = "events"
 

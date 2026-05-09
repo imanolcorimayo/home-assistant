@@ -104,6 +104,9 @@ async def telegram_webhook(
         elif quick == "event":
             from app.workers.finance_tasks import process_event_message
             process_event_message.delay(msg.text, chat_id, user_id)
+        elif quick == "task":
+            from app.workers.finance_tasks import process_task_message
+            process_task_message.delay(msg.text, chat_id, user_id)
         else:
             # 'transaction' o indeciso → flujo actual (LLM extrae transactions;
             # si no hay, ya tira "no encontré movimientos").
@@ -141,6 +144,8 @@ async def _handle_command(
         await _cmd_compras(args, member, chat_id, db)
     elif cmd == "/agenda":
         await _cmd_agenda(args, member, chat_id, db)
+    elif cmd == "/tareas" or cmd == "/tarea":
+        await _cmd_tareas(cmd, args, member, chat_id, db)
     elif cmd == "/ayuda":
         await send_message(
             chat_id,
@@ -158,6 +163,10 @@ async def _handle_command(
             "/compras done — marca todos como comprados (volviste del super)\n"
             "/agenda       — eventos próximos 7 días\n"
             "/agenda hoy | manana | semana\n"
+            "/tareas       — TODOs pendientes (mías + sin asignar)\n"
+            "/tarea add reparar canilla\n"
+            "/tarea add llevar libros @lu  — asigna a Luisiana\n"
+            "/tarea done <id>  — marca completada\n"
             "/undo         — eliminar el último movimiento registrado\n"
             "/ayuda        — esta ayuda",
         )
@@ -512,6 +521,95 @@ async def _cmd_notif(args: str, member: FamilyMember, chat_id: int, db: AsyncSes
     lines.append("")
     lines.append("Para cambiar: /notif on|off [tipo]")
     lines.append("Tipos: budget, reminder, resumen, anomalia")
+    await send_message(chat_id, "\n".join(lines))
+
+
+async def _cmd_tareas(cmd: str, args: str, member: FamilyMember, chat_id: int, db: AsyncSession) -> None:
+    """
+    /tareas              — pendientes mías + sin asignar
+    /tareas todas        — todas las pendientes (de todos)
+    /tareas hechas       — completadas recientes
+    /tarea add <texto>   — agrega (LLM extrae)
+    /tarea done <prefix> — completa por prefijo de UUID o título exacto
+    """
+    args = args.strip()
+    parts = args.split(maxsplit=1) if args else []
+    sub = parts[0].lower() if parts else ""
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if cmd == "/tarea" and sub == "add":
+        if not rest.strip():
+            await send_message(chat_id, "Decime qué agregar. Ej: /tarea add llamar al gas")
+            return
+        from app.workers.finance_tasks import process_task_message
+        process_task_message.delay(rest, chat_id, str(member.id))
+        return
+
+    if cmd == "/tarea" and sub == "done":
+        if not rest.strip():
+            await send_message(chat_id, "Decime cuál tarea. Ej: /tarea done canilla")
+            return
+        # Buscar por prefijo de id o por substring de título (case-insensitive)
+        rows = (await db.execute(text("""
+            SELECT id, title FROM tasks
+            WHERE deleted_at IS NULL AND task_status = 'pendiente'
+              AND (
+                LOWER(title) LIKE '%' || LOWER(:q) || '%'
+                OR (id::text LIKE :q || '%')
+              )
+            LIMIT 5
+        """), {"q": rest.strip()})).all()
+        if not rows:
+            await send_message(chat_id, "No encontré una tarea pendiente que coincida.")
+            return
+        if len(rows) > 1:
+            lines = ["Hay varias coincidencias, sé más específico:"] + \
+                    [f"  • {r.title}" for r in rows]
+            await send_message(chat_id, "\n".join(lines))
+            return
+        await db.execute(text(
+            "UPDATE tasks SET task_status = 'completada', updated_at = now() WHERE id = :id"
+        ), {"id": rows[0].id})
+        await db.commit()
+        await send_message(chat_id, f"✓ Completada: {rows[0].title}")
+        return
+
+    # /tareas → listar
+    only_mine = (sub != "todas")
+    show_done = (sub == "hechas" or sub == "completadas")
+
+    where = ["t.deleted_at IS NULL"]
+    params: dict = {}
+    if show_done:
+        where.append("t.task_status = 'completada'")
+    else:
+        where.append("t.task_status = 'pendiente'")
+    if only_mine and not show_done:
+        where.append("(t.assigned_to = :u OR t.assigned_to IS NULL)")
+        params["u"] = member.id
+
+    rows = (await db.execute(text(f"""
+        SELECT t.title, t.prioridad, t.due_datetime, fm.full_name AS asignado
+        FROM tasks t LEFT JOIN family_members fm ON fm.id = t.assigned_to
+        WHERE {' AND '.join(where)}
+        ORDER BY
+          CASE t.prioridad WHEN 'alta' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+          t.due_datetime NULLS LAST,
+          t.created_at DESC
+        LIMIT 30
+    """), params)).all()
+    if not rows:
+        await send_message(chat_id, "✓ Sin tareas pendientes.")
+        return
+    icon = {"alta": "🔴", "normal": "⚪", "baja": "🔵"}
+    lines = [f"📝 Tareas ({len(rows)}):"]
+    for r in rows:
+        ico = icon.get(r.prioridad, "⚪")
+        due = f" · {r.due_datetime.strftime('%d/%m')}" if r.due_datetime else ""
+        asg = f" · @{r.asignado.split()[0].lower()}" if r.asignado else " · cualquiera"
+        lines.append(f"  {ico} {r.title}{asg}{due}")
+    lines.append("")
+    lines.append("/tarea done <texto>  para marcar")
     await send_message(chat_id, "\n".join(lines))
 
 

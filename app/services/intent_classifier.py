@@ -33,11 +33,14 @@ _RE_VERBO_COMPRA = re.compile(r"\b(?:anota[mr]?e?|necesito|comprar|agreg[áa]me?
 # Marcadores temporales típicos de eventos
 _RE_DIA_FUTURO   = re.compile(r"\b(?:hoy|mañana|pasado|lunes|martes|mi[eé]rcoles|jueves|viernes|s[áa]bado|domingo|el d[íi]a \d{1,2}|el \d{1,2})\b", re.IGNORECASE)
 _RE_HORA         = re.compile(r"\b\d{1,2}\s*(?::\d{2}\s*)?(?:hs|hrs|am|pm|de la (?:mañana|tarde|noche))\b|\bA?\s*las\s+\d{1,2}", re.IGNORECASE)
-_RE_PALABRA_EVENTO = re.compile(r"\b(?:turno|reuni[óo]n|cita|cumple|evento|consulta|análisis|control|tr[áa]mite|ir al?|tengo)\b", re.IGNORECASE)
+_RE_PALABRA_EVENTO = re.compile(r"\b(?:turno|reuni[óo]n|cita|cumple|evento|consulta|análisis|control|tr[áa]mite|ir al?)\b", re.IGNORECASE)
+# Tareas: verbos imperativos / "tengo que" / "hay que" / mención @user
+_RE_TAREA        = re.compile(r"\b(?:tengo que|hay que|debo|deber[íi]a|recordar|recordame|repar(?:ar|á)|llamar|llevar|devolver|sacar|arreglar|llamame al?)\b|@(?:lu|hector|he)\b", re.IGNORECASE)
+_RE_URGENCIA     = re.compile(r"\b(?:urgente|asap|ya|ahora|cuanto antes)\b", re.IGNORECASE)
 
 
 def classify_quick(text: str) -> str | None:
-    """Heurística sin LLM. Devuelve 'transaction', 'shopping', 'event' o None."""
+    """Heurística sin LLM. Devuelve 'transaction', 'shopping', 'event', 'task' o None."""
     t = text.strip().lower()
     if not t:
         return None
@@ -47,13 +50,17 @@ def classify_quick(text: str) -> str | None:
     has_dia     = bool(_RE_DIA_FUTURO.search(t))
     has_hora    = bool(_RE_HORA.search(t))
     has_evento  = bool(_RE_PALABRA_EVENTO.search(t))
+    has_tarea   = bool(_RE_TAREA.search(t))
 
     # Gasto explícito gana
     if has_amount and has_gasto:
         return "transaction"
-    # Evento: marcador temporal + (palabra de evento o hora)
+    # Evento: marcador temporal + (palabra de evento o hora) y NO es tarea pura
     if has_dia and (has_evento or has_hora) and not has_amount:
         return "event"
+    # Tarea: verbo imperativo / "tengo que" / "@user" sin marcador temporal claro
+    if has_tarea and not has_amount:
+        return "task"
     if has_compra and not has_amount:
         return "shopping"
     if has_amount and not has_compra:
