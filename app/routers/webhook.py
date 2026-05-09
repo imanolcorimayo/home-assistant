@@ -94,7 +94,17 @@ async def telegram_webhook(
             mime_type=msg.document.mime_type or "application/octet-stream",
         )
     elif msg.text:
-        process_text_message.delay(msg.text, chat_id, user_id)
+        # Clasificación rápida (heurística): si parece compra clara, va a la lista.
+        # Si no, sigue el flujo financiero (que también tiene LLM clasificador interno).
+        from app.services.intent_classifier import classify_quick
+        quick = classify_quick(msg.text)
+        if quick == "shopping":
+            from app.workers.finance_tasks import process_shopping_message
+            process_shopping_message.delay(msg.text, chat_id, user_id)
+        else:
+            # 'transaction' o indeciso → flujo actual (LLM extrae transactions;
+            # si no hay, ya tira "no encontré movimientos").
+            process_text_message.delay(msg.text, chat_id, user_id)
 
     return {"ok": True}
 
@@ -124,6 +134,8 @@ async def _handle_command(
         await _cmd_proyeccion(chat_id, db)
     elif cmd == "/notif":
         await _cmd_notif(args, member, chat_id, db)
+    elif cmd == "/compras":
+        await _cmd_compras(args, member, chat_id, db)
     elif cmd == "/ayuda":
         await send_message(
             chat_id,
@@ -136,6 +148,9 @@ async def _handle_command(
             "/proyeccion   — proyección de gasto a fin de mes\n"
             "/notif        — ver tus preferencias de notificaciones\n"
             "/notif on|off [tipo]  — activar/desactivar avisos\n"
+            "/compras      — lista de compras (familiar)\n"
+            "/compras add leche, pan, 2kg de tomate\n"
+            "/compras done — marca todos como comprados (volviste del super)\n"
             "/undo         — eliminar el último movimiento registrado\n"
             "/ayuda        — esta ayuda",
         )
@@ -490,6 +505,70 @@ async def _cmd_notif(args: str, member: FamilyMember, chat_id: int, db: AsyncSes
     lines.append("")
     lines.append("Para cambiar: /notif on|off [tipo]")
     lines.append("Tipos: budget, reminder, resumen, anomalia")
+    await send_message(chat_id, "\n".join(lines))
+
+
+async def _cmd_compras(args: str, member: FamilyMember, chat_id: int, db: AsyncSession) -> None:
+    """
+    /compras           — listar pendientes
+    /compras add ...   — agregar items (LLM extrae)
+    /compras done      — marcar todo como comprado
+    /compras clear     — borrar todos los pendientes
+    """
+    args = args.strip()
+    parts = args.split(maxsplit=1) if args else []
+    sub = parts[0].lower() if parts else ""
+
+    if sub == "add":
+        rest = parts[1] if len(parts) > 1 else ""
+        if not rest.strip():
+            await send_message(chat_id, "Decime qué agregar. Ej: /compras add leche, pan, 2kg de tomate")
+            return
+        # Encolar al worker para no bloquear el webhook con la llamada al LLM
+        from app.workers.finance_tasks import process_shopping_message
+        process_shopping_message.delay(rest, chat_id, str(member.id))
+        return
+
+    if sub == "done" or sub == "vaciar":
+        result = await db.execute(text("""
+            UPDATE shopping_list_items SET completed_at = now(), updated_at = now()
+            WHERE completed_at IS NULL
+            RETURNING id
+        """))
+        n = len(result.all())
+        await db.commit()
+        if n == 0:
+            await send_message(chat_id, "La lista ya estaba vacía.")
+        else:
+            await send_message(chat_id, f"✓ {n} items marcados como comprados.")
+        return
+
+    if sub == "clear":
+        result = await db.execute(text("DELETE FROM shopping_list_items WHERE completed_at IS NULL RETURNING id"))
+        n = len(result.all())
+        await db.commit()
+        await send_message(chat_id, f"🗑 {n} pendientes borrados.")
+        return
+
+    # Sin args → listar
+    rows = (await db.execute(text("""
+        SELECT id, texto, cantidad, unidad
+        FROM shopping_list_items
+        WHERE completed_at IS NULL
+        ORDER BY created_at
+        LIMIT 50
+    """))).all()
+    if not rows:
+        await send_message(chat_id, "🛒 Lista de compras vacía.\n\nAgregá con: /compras add leche, pan")
+        return
+    lines = [f"🛒 Lista de compras ({len(rows)}):"]
+    for r in rows:
+        cant = ""
+        if r.cantidad:
+            cant = f" — {r.cantidad:g}{r.unidad or ''}"
+        lines.append(f"  • {r.texto}{cant}")
+    lines.append("")
+    lines.append("/compras done para vaciar al volver del super")
     await send_message(chat_id, "\n".join(lines))
 
 

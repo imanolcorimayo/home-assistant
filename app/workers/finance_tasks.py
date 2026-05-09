@@ -30,6 +30,39 @@ _redis = redis.from_url(settings.redis_url, decode_responses=True)
 _PENDING_TX_TTL = 300
 
 
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=120, time_limit=180)
+def process_shopping_message(self, text_msg: str, chat_id: int, user_id: str) -> None:
+    """Extrae items de compra del texto vía LLM y los inserta en shopping_list_items."""
+    from sqlalchemy import text as sa_t
+
+    items = ollama_client.extract_shopping_items(text_msg)
+    if not items:
+        telegram_client.send_message_sync(chat_id, "🤔 No encontré items para agregar.")
+        return
+
+    inserted = []
+    with SyncSessionLocal() as db:
+        for it in items:
+            r = db.execute(sa_t("""
+                INSERT INTO shopping_list_items (texto, cantidad, unidad, created_by)
+                VALUES (:t, :c, :u, :cb)
+                RETURNING id, texto, cantidad, unidad
+            """), {"t": it["texto"], "c": it.get("cantidad"), "u": it.get("unidad"),
+                   "cb": uuid.UUID(user_id)}).first()
+            inserted.append(r)
+        db.commit()
+
+    if not inserted:
+        telegram_client.send_message_sync(chat_id, "🤔 No encontré items para agregar.")
+        return
+
+    lines = [f"🛒 Agregado{'s' if len(inserted)!=1 else ''} ({len(inserted)}):"]
+    for r in inserted:
+        cant = f" — {float(r.cantidad):g}{r.unidad or ''}" if r.cantidad else ""
+        lines.append(f"  • {r.texto}{cant}")
+    telegram_client.send_message_sync(chat_id, "\n".join(lines))
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10, soft_time_limit=120, time_limit=180)
 def process_photo_message(
     self,

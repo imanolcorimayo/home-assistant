@@ -189,6 +189,80 @@ def suggest_filing_path(
     return {"ruta": ruta, "razon": razon}
 
 
+_SHOPPING_PROMPT = """\
+Extraé items de compras desde un mensaje en español. El usuario puede dictar
+varios items en uno solo, separados por coma, "y", o salto de línea.
+
+Devuelve EXCLUSIVAMENTE un JSON con este formato:
+{{
+  "items": [
+    {{"texto": "<nombre del producto>", "cantidad": <numero o null>, "unidad": "<kg|l|u|null>"}}
+  ]
+}}
+
+Reglas:
+- "texto" es lo más conciso posible: 'leche', 'pan integral', 'tomate', no 'comprar leche'.
+- "cantidad" solo si el usuario lo especifica numéricamente. Si dice "una", "dos", convertir a número.
+- "unidad": 'kg' (kilos), 'g' (gramos), 'l' (litros), 'ml', 'u' (unidades). Null si no aplica.
+- Ignorá verbos: "anotame", "comprar", "necesito", "agregame".
+- Si no hay items reales: {{"items": []}}.
+
+Ejemplos:
+- "anotame leche, pan y 2 tomates"          → [{{"texto":"leche","cantidad":null,"unidad":null}},
+                                               {{"texto":"pan","cantidad":null,"unidad":null}},
+                                               {{"texto":"tomate","cantidad":2,"unidad":"u"}}]
+- "necesito 2kg de papas y 1 litro de aceite"
+                                            → [{{"texto":"papa","cantidad":2,"unidad":"kg"}},
+                                               {{"texto":"aceite","cantidad":1,"unidad":"l"}}]
+- "comprar yogur"                           → [{{"texto":"yogur","cantidad":null,"unidad":null}}]
+
+Mensaje: "{text}"
+JSON:
+"""
+
+
+def extract_shopping_items(text: str) -> list[dict]:
+    """Devuelve lista de {texto, cantidad, unidad}. Lista vacía si no hay items."""
+    prompt = _SHOPPING_PROMPT.format(text=text)
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{settings.ollama_url}/api/generate",
+                json={
+                    "model": settings.ollama_model,
+                    "prompt": prompt,
+                    "format": "json",
+                    "stream": False,
+                    "keep_alive": "5m",
+                    "options": {"num_ctx": 1024, "num_predict": 256, "temperature": 0.0},
+                },
+            )
+            resp.raise_for_status()
+        data = json.loads(resp.json()["response"])
+        items = data.get("items", []) if isinstance(data, dict) else []
+        # Normalización defensiva
+        cleaned = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            txt = (it.get("texto") or "").strip()
+            if not txt:
+                continue
+            cantidad = it.get("cantidad")
+            try:
+                cantidad = float(cantidad) if cantidad not in (None, "", "null") else None
+            except (ValueError, TypeError):
+                cantidad = None
+            unidad = it.get("unidad")
+            if unidad in ("null", "", None):
+                unidad = None
+            cleaned.append({"texto": txt[:120], "cantidad": cantidad, "unidad": unidad})
+        return cleaned
+    except Exception as exc:
+        logger.warning("extract_shopping_items falló: %s", exc)
+        return []
+
+
 def warm_up() -> None:
     """Pre-carga el modelo de Ollama en RAM para evitar el cold start de la 1ª dictada.
 

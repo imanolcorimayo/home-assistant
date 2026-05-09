@@ -1030,6 +1030,7 @@
     <div class="nav-tabs">
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
       <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
+      <button class="nav-tab" :class="{ active: tab === 'compras' }" @click="switchTab('compras')">Compras</button>
       <button class="nav-tab" :class="{ active: tab === 'pendientes' }" @click="switchTab('pendientes')">Pendientes</button>
       <button class="nav-tab" :class="{ active: tab === 'tarjeta' }" @click="switchTab('tarjeta')">Tarjeta</button>
       <button class="nav-tab" :class="{ active: tab === 'prestamos' }" @click="switchTab('prestamos')">Préstamos</button>
@@ -1326,6 +1327,59 @@
               </div>
             </div>
           </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========== COMPRAS ========== -->
+  <div class="page" :class="{ active: tab === 'compras' }">
+    <div class="rule-label"><span>Lista della Spesa</span></div>
+
+    <!-- Input de agregado rápido -->
+    <div class="card grid-full">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input class="filter-input" type="text" x-model="newCompra"
+               @keydown.enter="addCompra()" style="flex:1;min-width:200px"
+               placeholder="ej. leche, pan, 2kg de tomate">
+        <button class="form-btn" @click="addCompra()">+ Agregar</button>
+        <button class="form-btn-ghost" @click="vaciarCompras()" :disabled="!compras.filter(c => !c.completed_at).length">
+          ✓ Volví del super
+        </button>
+      </div>
+      <p class="section-sub" style="margin-top:8px">El bot acepta varios items en uno solo (separados por coma o "y")</p>
+    </div>
+
+    <!-- Lista pendiente -->
+    <div class="card grid-full" style="margin-top:24px">
+      <div class="section-title" x-text="'Por comprar (' + compras.filter(c => !c.completed_at).length + ')'"></div>
+      <template x-if="compras.filter(c => !c.completed_at).length === 0">
+        <div class="empty">Sin items pendientes</div>
+      </template>
+      <template x-for="c in compras.filter(c => !c.completed_at)" :key="c.id">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--hairline);gap:12px">
+          <button @click="markCompraDone(c.id)" title="Marcar comprado"
+                  style="background:transparent;border:1px solid var(--hairline-strong);width:24px;height:24px;border-radius:50%;cursor:pointer;flex-shrink:0"></button>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:500;color:var(--ink-bright)" x-text="c.texto"></div>
+            <div x-show="c.cantidad" style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace"
+                 x-text="(c.cantidad ? c.cantidad : '') + (c.unidad || '')"></div>
+          </div>
+          <button class="row-btn danger" @click="deleteCompra(c.id)" title="Borrar">✕</button>
+        </div>
+      </template>
+    </div>
+
+    <!-- Histórico recientes -->
+    <div class="card grid-full" style="margin-top:24px" x-show="compras.filter(c => c.completed_at).length > 0">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="section-title">Comprados recientemente</div>
+        <button class="form-btn-ghost" @click="borrarHistorialCompras()" title="Limpia el histórico">Vaciar histórico</button>
+      </div>
+      <template x-for="c in compras.filter(c => c.completed_at).slice(0, 30)" :key="c.id">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--hairline);opacity:0.55">
+          <div style="font-size:12px;text-decoration:line-through" x-text="c.texto"></div>
+          <button class="row-btn" @click="undoCompra(c.id)" title="Volver a la lista">↩</button>
         </div>
       </template>
     </div>
@@ -1894,6 +1948,10 @@
       // Drill-down de categoría
       catDetail: { show: false, data: null },
 
+      // Lista de compras
+      compras: [],
+      newCompra: '',
+
       // Pendientes de pago + attachments
       pendientes: null,
       huerfanos: [],
@@ -2016,6 +2074,9 @@
           this.loadPendientes();
           this.loadHuerfanos();
         }
+        if (t === 'compras') {
+          this.loadCompras();
+        }
         if (t === 'analisis') {
           this.loadComparativa();
           this.loadTendencia();
@@ -2035,6 +2096,65 @@
       async loadSalud() {
         try { this.salud = await this.api(`/salud-financiera`); } catch(e) {}
       },
+      // ───── Lista de compras ─────
+      async loadCompras() {
+        try { this.compras = await this.api(`/compras?incluir_completados=true`); } catch(e) {}
+      },
+      async addCompra() {
+        const txt = (this.newCompra || '').trim();
+        if (!txt) return;
+        // Si tiene comas o "y", parsear localmente para múltiples items
+        const items = txt.split(/,| y /i).map(s => s.trim()).filter(Boolean);
+        try {
+          for (const item of items) {
+            await this.api(`/compra`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ texto: item }),
+            });
+          }
+          this.newCompra = '';
+          await this.loadCompras();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async markCompraDone(id) {
+        try {
+          await this.api(`/compra/${id}/done`, { method: 'PATCH' });
+          await this.loadCompras();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async undoCompra(id) {
+        try {
+          await this.api(`/compra/${id}/undo`, { method: 'PATCH' });
+          await this.loadCompras();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async deleteCompra(id) {
+        try {
+          await this.api(`/compra/${id}`, { method: 'DELETE' });
+          await this.loadCompras();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async vaciarCompras() {
+        const ok = await this.confirm('¿Marcar todos los pendientes como comprados?',
+                                       { title: 'Volví del super', okLabel: 'Marcar todo' });
+        if (!ok) return;
+        try {
+          const r = await this.api(`/compras/vaciar`, { method: 'POST' });
+          this.showToast(`✓ ${r.completados} items marcados`, 'success');
+          await this.loadCompras();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async borrarHistorialCompras() {
+        const ok = await this.confirm('¿Borrar el histórico de compras completadas?',
+                                       { title: 'Vaciar histórico', okLabel: 'Borrar' });
+        if (!ok) return;
+        try {
+          await this.api(`/compras/historial`, { method: 'DELETE' });
+          await this.loadCompras();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+
       async loadPendientes() {
         try { this.pendientes = await this.api(`/pendientes`); } catch(e) {}
       },

@@ -78,6 +78,21 @@ class InstallmentPlan(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class ShoppingListItem(Base):
+    __tablename__ = "shopping_list_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    texto: Mapped[str] = mapped_column(Text, nullable=False)
+    cantidad: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True)
+    unidad: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class Attachment(Base):
     __tablename__ = "attachments"
 
