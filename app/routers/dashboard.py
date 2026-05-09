@@ -5,7 +5,11 @@ from calendar import monthrange
 from datetime import date as date_cls, datetime
 from typing import Optional
 
+import csv
+import io
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -430,6 +434,335 @@ async def get_tendencia(
     return {"subcategorias": subs_unicas, "series": serie}
 
 
+@router.get("/salud-financiera")
+async def get_salud_financiera(db: AsyncSession = Depends(get_db)):
+    """Métricas de salud financiera: tasa de ahorro mensual y YTD, runway,
+    promedio de gastos.
+    """
+    today = datetime.now().date()
+    anio = today.year
+
+    mes_row = (await db.execute(text("""
+        SELECT ingresos, gastos, balance, pct_gasto_sobre_ingreso
+        FROM v_balance_mensual
+        WHERE anio = :a AND mes = :m
+    """), {"a": today.year, "m": today.month})).first()
+    mes_ingresos = float(mes_row.ingresos) if mes_row else 0.0
+    mes_gastos   = float(mes_row.gastos)   if mes_row else 0.0
+    mes_ahorro   = mes_ingresos - mes_gastos
+    mes_tasa     = (mes_ahorro / mes_ingresos * 100) if mes_ingresos > 0 else None
+
+    ytd_row = (await db.execute(text("""
+        SELECT COALESCE(SUM(ingresos), 0) AS ingresos,
+               COALESCE(SUM(gastos), 0)   AS gastos
+        FROM v_balance_mensual
+        WHERE anio = :a AND mes <= :m
+    """), {"a": anio, "m": today.month})).first()
+    ytd_ingresos = float(ytd_row.ingresos) if ytd_row else 0.0
+    ytd_gastos   = float(ytd_row.gastos)   if ytd_row else 0.0
+    ytd_ahorro   = ytd_ingresos - ytd_gastos
+    ytd_tasa     = (ytd_ahorro / ytd_ingresos * 100) if ytd_ingresos > 0 else None
+
+    avg_row = (await db.execute(text("""
+        SELECT AVG(gastos) AS avg6
+        FROM (
+            SELECT gastos
+            FROM v_balance_mensual
+            WHERE (anio < :a OR (anio = :a AND mes < :m))
+            ORDER BY anio DESC, mes DESC
+            LIMIT 6
+        ) AS sub
+    """), {"a": today.year, "m": today.month})).first()
+    avg_gastos_6m = float(avg_row.avg6) if avg_row and avg_row.avg6 else 0.0
+
+    pat_row = (await db.execute(text("SELECT patrimonio_neto FROM v_patrimonio_neto"))).first()
+    patrimonio = float(pat_row.patrimonio_neto) if pat_row and pat_row.patrimonio_neto else 0.0
+
+    runway_meses = (patrimonio / avg_gastos_6m) if avg_gastos_6m > 0 else None
+
+    return {
+        "mes": {
+            "ingresos": mes_ingresos,
+            "gastos":   mes_gastos,
+            "ahorro":   mes_ahorro,
+            "tasa_ahorro": mes_tasa,
+        },
+        "ytd": {
+            "anio":     anio,
+            "ingresos": ytd_ingresos,
+            "gastos":   ytd_gastos,
+            "ahorro":   ytd_ahorro,
+            "tasa_ahorro": ytd_tasa,
+        },
+        "runway": {
+            "patrimonio": patrimonio,
+            "avg_gastos_6m": avg_gastos_6m,
+            "meses": round(runway_meses, 1) if runway_meses else None,
+        },
+    }
+
+
+@router.get("/tasa-ahorro-historico")
+async def get_tasa_ahorro_historico(meses: int = Query(default=12, ge=1, le=36),
+                                     db: AsyncSession = Depends(get_db)):
+    """Evolución mensual de la tasa de ahorro: últimos N meses con datos."""
+    rows = (await db.execute(text("""
+        SELECT anio, mes, ingresos, gastos, balance
+        FROM v_balance_mensual
+        ORDER BY anio DESC, mes DESC
+        LIMIT :n
+    """), {"n": meses})).all()
+
+    series = []
+    for r in reversed(rows):
+        ing = float(r.ingresos)
+        gas = float(r.gastos)
+        tasa = ((ing - gas) / ing * 100) if ing > 0 else None
+        series.append({
+            "anio": int(r.anio), "mes": int(r.mes),
+            "ingresos": ing, "gastos": gas, "ahorro": ing - gas,
+            "tasa_ahorro": round(tasa, 1) if tasa is not None else None,
+        })
+    return series
+
+
+@router.get("/export")
+async def export_csv(
+    anio: int = Query(default=None),
+    mes: int = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exporta las transactions del mes (o todo el año si mes=None) a CSV."""
+    now = datetime.now()
+    anio = anio or now.year
+
+    if mes:
+        where = "EXTRACT(year FROM transaction_date) = :a AND EXTRACT(month FROM transaction_date) = :m"
+        params = {"a": anio, "m": mes}
+        filename = f"sovereignbox-{anio}-{mes:02d}.csv"
+    else:
+        where = "EXTRACT(year FROM transaction_date) = :a"
+        params = {"a": anio}
+        filename = f"sovereignbox-{anio}.csv"
+
+    rows = (await db.execute(text(f"""
+        SELECT t.transaction_date, t.tipo, t.amount, t.currency,
+               t.categoria, t.subcategoria1, t.subcategoria2, t.subcategoria3,
+               t.nota, t.origen, fm.full_name AS miembro, a.nombre AS cuenta
+        FROM transactions t
+        JOIN family_members fm ON t.family_member_id = fm.id
+        LEFT JOIN accounts a   ON t.account_id = a.id
+        WHERE t.deleted_at IS NULL AND {where}
+        ORDER BY t.transaction_date, t.created_at
+    """), params)).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "fecha", "tipo", "monto", "moneda",
+        "categoria", "subcategoria1", "subcategoria2", "subcategoria3",
+        "nota", "origen", "miembro", "cuenta",
+    ])
+    for r in rows:
+        writer.writerow([
+            r.transaction_date.isoformat(),
+            r.tipo or "",
+            f"{float(r.amount):.2f}",
+            r.currency,
+            r.categoria or "", r.subcategoria1 or "", r.subcategoria2 or "", r.subcategoria3 or "",
+            r.nota or "", r.origen or "", r.miembro, r.cuenta or "",
+        ])
+
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/anomalias")
+async def get_anomalias(db: AsyncSession = Depends(get_db)):
+    """Transactions del mes actual cuyo monto supere avg + 2σ histórico de la subcategoría."""
+    rows = (await db.execute(text("""
+        WITH stats AS (
+            SELECT subcategoria1,
+                   AVG(amount) AS avg_a,
+                   STDDEV_POP(amount) AS sd_a
+            FROM transactions
+            WHERE deleted_at IS NULL AND tipo = 'gasto'
+              AND subcategoria1 IS NOT NULL
+              AND transaction_date >= CURRENT_DATE - INTERVAL '6 months'
+              AND transaction_date <  date_trunc('month', CURRENT_DATE)
+            GROUP BY subcategoria1
+            HAVING COUNT(*) >= 3
+        )
+        SELECT t.id, t.transaction_date, t.amount, t.subcategoria1, t.subcategoria2, t.nota,
+               s.avg_a, s.sd_a
+        FROM transactions t
+        JOIN stats s USING (subcategoria1)
+        WHERE t.deleted_at IS NULL AND t.tipo = 'gasto'
+          AND t.transaction_date >= date_trunc('month', CURRENT_DATE)
+          AND t.amount > s.avg_a + 2 * COALESCE(s.sd_a, 0)
+          AND t.amount > s.avg_a * 1.5
+        ORDER BY t.amount DESC
+        LIMIT 10
+    """))).all()
+    return [
+        {
+            "id": str(r.id),
+            "fecha": r.transaction_date.isoformat(),
+            "amount": float(r.amount),
+            "subcategoria1": r.subcategoria1,
+            "subcategoria2": r.subcategoria2,
+            "nota": r.nota,
+            "avg_historico": round(float(r.avg_a), 2),
+            "sd_historico":  round(float(r.sd_a or 0), 2),
+            "exceso_pct":    round((float(r.amount) - float(r.avg_a)) / float(r.avg_a) * 100, 0),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/recurrencias-detectadas")
+async def get_recurrencias_detectadas(db: AsyncSession = Depends(get_db)):
+    """Patrones (sub1, sub2, monto aprox) que se repiten ≥3 meses y no están como recurring_charges."""
+    rows = (await db.execute(text("""
+        WITH meses AS (
+            SELECT DISTINCT
+                subcategoria1,
+                COALESCE(subcategoria2, '') AS subcategoria2,
+                ROUND(amount::NUMERIC, 0)   AS monto_aprox,
+                EXTRACT(YEAR  FROM transaction_date)::INT AS y,
+                EXTRACT(MONTH FROM transaction_date)::INT AS m
+            FROM transactions
+            WHERE deleted_at IS NULL AND tipo='gasto'
+              AND recurring_charge_id IS NULL
+              AND loan_id IS NULL
+              AND installment_plan_id IS NULL
+              AND card_statement_id IS NULL
+              AND transaction_date >= CURRENT_DATE - INTERVAL '6 months'
+        ),
+        agrupado AS (
+            SELECT subcategoria1, subcategoria2, monto_aprox,
+                   COUNT(DISTINCT (y, m)) AS meses
+            FROM meses
+            GROUP BY subcategoria1, subcategoria2, monto_aprox
+        )
+        SELECT subcategoria1, subcategoria2, monto_aprox, meses
+        FROM agrupado
+        WHERE meses >= 3
+        ORDER BY meses DESC, monto_aprox DESC
+        LIMIT 10
+    """))).all()
+    return [
+        {
+            "subcategoria1": r.subcategoria1,
+            "subcategoria2": r.subcategoria2 or None,
+            "monto_aprox":   float(r.monto_aprox),
+            "meses":         int(r.meses),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/categoria/detalle")
+async def get_categoria_detalle(
+    sub1: str = Query(...),
+    meses: int = Query(default=12, ge=1, le=36),
+    db: AsyncSession = Depends(get_db),
+):
+    """Detalle de una subcategoría: serie mensual, ticket promedio, últimas transactions."""
+    sub1_n = sub1.strip()
+
+    serie = (await db.execute(text("""
+        SELECT anio, mes, total
+        FROM v_tendencia_subcategoria1
+        WHERE LOWER(subcategoria1) = LOWER(:s) AND tipo = 'gasto'
+        ORDER BY anio DESC, mes DESC
+        LIMIT :n
+    """), {"s": sub1_n, "n": meses})).all()
+
+    stats = (await db.execute(text("""
+        SELECT COUNT(*) AS n, AVG(amount) AS ticket_promedio,
+               SUM(amount) AS total_periodo, MIN(amount) AS min_amount, MAX(amount) AS max_amount
+        FROM transactions
+        WHERE deleted_at IS NULL AND tipo = 'gasto'
+          AND LOWER(subcategoria1) = LOWER(:s)
+          AND transaction_date >= CURRENT_DATE - INTERVAL '1 year'
+    """), {"s": sub1_n})).first()
+
+    ultimas = (await db.execute(text("""
+        SELECT id, transaction_date, amount, subcategoria2, subcategoria3, nota
+        FROM transactions
+        WHERE deleted_at IS NULL AND tipo = 'gasto'
+          AND LOWER(subcategoria1) = LOWER(:s)
+        ORDER BY transaction_date DESC
+        LIMIT 30
+    """), {"s": sub1_n})).all()
+
+    return {
+        "subcategoria1": sub1_n,
+        "serie": [
+            {"anio": int(r.anio), "mes": int(r.mes), "total": float(r.total)}
+            for r in reversed(serie)
+        ],
+        "stats": {
+            "transacciones": int(stats.n) if stats and stats.n else 0,
+            "ticket_promedio": float(stats.ticket_promedio) if stats and stats.ticket_promedio else 0,
+            "total_anio": float(stats.total_periodo) if stats and stats.total_periodo else 0,
+            "min": float(stats.min_amount) if stats and stats.min_amount else 0,
+            "max": float(stats.max_amount) if stats and stats.max_amount else 0,
+        },
+        "ultimas": [
+            {
+                "id": str(u.id), "fecha": u.transaction_date.isoformat(),
+                "amount": float(u.amount), "subcategoria2": u.subcategoria2,
+                "subcategoria3": u.subcategoria3, "nota": u.nota,
+            } for u in ultimas
+        ],
+    }
+
+
+@router.get("/distribucion-miembro")
+async def get_distribucion_miembro(
+    anio: int = Query(default=None),
+    mes: int = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Distribución de ingresos y gastos por miembro de la familia para el mes dado."""
+    now = datetime.now()
+    anio = anio or now.year
+    mes  = mes  or now.month
+
+    rows = (await db.execute(text("""
+        SELECT miembro,
+               COALESCE(SUM(CASE WHEN tipo='ingreso' THEN total ELSE 0 END), 0) AS ingresos,
+               COALESCE(SUM(CASE WHEN tipo='gasto'   THEN total ELSE 0 END), 0) AS gastos
+        FROM v_resumen_mensual
+        WHERE anio = :a AND mes = :m AND miembro IS NOT NULL
+        GROUP BY miembro
+        ORDER BY miembro
+    """), {"a": anio, "m": mes})).all()
+
+    miembros = [
+        {
+            "miembro": r.miembro,
+            "ingresos": float(r.ingresos),
+            "gastos":   float(r.gastos),
+            "neto":     float(r.ingresos) - float(r.gastos),
+        }
+        for r in rows
+    ]
+    total_ingresos = sum(m["ingresos"] for m in miembros)
+    total_gastos   = sum(m["gastos"]   for m in miembros)
+    for m in miembros:
+        m["pct_ingresos"] = (m["ingresos"] / total_ingresos * 100) if total_ingresos > 0 else 0
+        m["pct_gastos"]   = (m["gastos"]   / total_gastos   * 100) if total_gastos   > 0 else 0
+
+    return {"anio": anio, "mes": mes, "miembros": miembros, "total_ingresos": total_ingresos, "total_gastos": total_gastos}
+
+
 @router.get("/insights")
 async def get_insights(
     anio: int = Query(default=None),
@@ -587,6 +920,62 @@ async def get_insights(
             "icon": "🏦",
             "title": "Préstamos activos",
             "text": f"{int(prestamos.n)} en curso · €{mensual:,.0f}/mes · €{pendiente:,.0f} pendientes",
+        })
+
+    anomalia = (await db.execute(text("""
+        WITH stats AS (
+            SELECT subcategoria1, AVG(amount) AS avg_a, STDDEV_POP(amount) AS sd_a
+            FROM transactions
+            WHERE deleted_at IS NULL AND tipo='gasto' AND subcategoria1 IS NOT NULL
+              AND transaction_date >= CURRENT_DATE - INTERVAL '6 months'
+              AND transaction_date <  date_trunc('month', CURRENT_DATE)
+            GROUP BY subcategoria1
+            HAVING COUNT(*) >= 3
+        )
+        SELECT t.amount, t.subcategoria1, s.avg_a
+        FROM transactions t
+        JOIN stats s USING (subcategoria1)
+        WHERE t.deleted_at IS NULL AND t.tipo='gasto'
+          AND t.transaction_date >= date_trunc('month', CURRENT_DATE)
+          AND t.amount > s.avg_a + 2 * COALESCE(s.sd_a, 0)
+          AND t.amount > s.avg_a * 1.5
+        ORDER BY t.amount DESC LIMIT 1
+    """))).first()
+    if anomalia:
+        excess = (float(anomalia.amount) - float(anomalia.avg_a)) / float(anomalia.avg_a) * 100
+        insights.append({
+            "kind": "anomalia",
+            "icon": "🔍",
+            "title": "Gasto inusual detectado",
+            "text": f"{anomalia.subcategoria1}: €{float(anomalia.amount):,.0f} ({excess:+.0f}% vs habitual)",
+            "trend": "up",
+        })
+
+    rec = (await db.execute(text("""
+        WITH meses AS (
+            SELECT DISTINCT subcategoria1, COALESCE(subcategoria2, '') AS sub2,
+                   ROUND(amount::NUMERIC, 0) AS monto,
+                   EXTRACT(YEAR FROM transaction_date)::INT AS y,
+                   EXTRACT(MONTH FROM transaction_date)::INT AS m
+            FROM transactions
+            WHERE deleted_at IS NULL AND tipo='gasto'
+              AND recurring_charge_id IS NULL AND loan_id IS NULL
+              AND installment_plan_id IS NULL AND card_statement_id IS NULL
+              AND transaction_date >= CURRENT_DATE - INTERVAL '6 months'
+        )
+        SELECT subcategoria1, sub2, monto, COUNT(DISTINCT (y, m)) AS meses
+        FROM meses
+        GROUP BY subcategoria1, sub2, monto
+        HAVING COUNT(DISTINCT (y, m)) >= 3
+        ORDER BY meses DESC, monto DESC LIMIT 1
+    """))).first()
+    if rec:
+        nombre = rec.sub2 if rec.sub2 else rec.subcategoria1
+        insights.append({
+            "kind": "recurrencia",
+            "icon": "🔁",
+            "title": "Posible suscripción detectada",
+            "text": f"{nombre}: €{float(rec.monto):,.0f} repetido {int(rec.meses)} meses",
         })
 
     return insights

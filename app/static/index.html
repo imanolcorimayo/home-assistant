@@ -686,6 +686,64 @@
     </div>
   </div>
 
+  <!-- DRILL-DOWN CATEGORIA MODAL -->
+  <div class="modal-backdrop" x-show="catDetail.show" @click.self="catDetail.show = false" x-cloak>
+    <div class="modal modal-lg" x-show="catDetail.data">
+      <h3 x-text="catDetail.data?.subcategoria1 ?? ''"></h3>
+      <template x-if="catDetail.data">
+        <div>
+          <div class="grid-3 stagger" style="margin-bottom:18px">
+            <div class="card" style="padding:14px">
+              <div class="card-label">Total 12m</div>
+              <div class="card-value" style="font-size:24px" x-text="fmt(catDetail.data.stats.total_anio)"></div>
+              <div class="card-sub" x-text="catDetail.data.stats.transacciones + ' transacciones'"></div>
+            </div>
+            <div class="card" style="padding:14px">
+              <div class="card-label">Ticket promedio</div>
+              <div class="card-value" style="font-size:24px" x-text="fmt(catDetail.data.stats.ticket_promedio)"></div>
+              <div class="card-sub" x-text="'Min ' + fmt(catDetail.data.stats.min) + ' · Max ' + fmt(catDetail.data.stats.max)"></div>
+            </div>
+            <div class="card" style="padding:14px">
+              <div class="card-label">Promedio mensual</div>
+              <div class="card-value" style="font-size:24px"
+                   x-text="fmt(catDetail.data.serie.length > 0 ? catDetail.data.serie.reduce((a,p)=>a+p.total,0)/catDetail.data.serie.length : 0)"></div>
+              <div class="card-sub" x-text="catDetail.data.serie.length + ' meses con datos'"></div>
+            </div>
+          </div>
+
+          <div class="section-title">Tendencia mensual</div>
+          <div style="display:flex;align-items:flex-end;gap:6px;height:120px;margin:14px 0 24px">
+            <template x-for="p in catDetail.data.serie" :key="p.anio + '-' + p.mes">
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%">
+                <div style="flex:1;width:100%;display:flex;align-items:flex-end">
+                  <div style="background:var(--champagne);width:100%;border-radius:2px 2px 0 0"
+                       :style="'height:' + Math.min(100, p.total / Math.max(...catDetail.data.serie.map(x=>x.total), 1) * 100) + '%'"></div>
+                </div>
+                <div style="font-size:9px;color:var(--ink3);font-family:'JetBrains Mono',monospace" x-text="String(p.mes).padStart(2,'0')+'/'+String(p.anio).slice(2)"></div>
+              </div>
+            </template>
+          </div>
+
+          <div class="section-title">Últimas transacciones</div>
+          <div style="max-height:280px;overflow-y:auto;margin-top:14px">
+            <template x-for="u in catDetail.data.ultimas" :key="u.id">
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--hairline)">
+                <div>
+                  <div style="font-size:12px" x-text="(u.subcategoria2 || '—') + (u.subcategoria3 ? ' / ' + u.subcategoria3 : '') + (u.nota ? ' · ' + u.nota : '')"></div>
+                  <div style="font-size:10px;color:var(--ink3);font-family:'JetBrains Mono',monospace" x-text="u.fecha"></div>
+                </div>
+                <span class="pill pill-gasto" x-text="'−' + fmt(u.amount).replace('-','').replace('−','')"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div class="modal-actions">
+        <button class="form-btn-ghost" @click="catDetail.show = false">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- NUEVA CUOTA MODAL -->
   <div class="modal-backdrop" x-show="newCuotaDlg.show" @click.self="newCuotaDlg.show = false" x-cloak>
     <div class="modal modal-lg" x-show="newCuotaDlg.show">
@@ -976,6 +1034,27 @@
       </div>
     </div>
 
+    <!-- SALUD FINANCIERA -->
+    <div class="grid-3 stagger" x-show="salud">
+      <div class="card">
+        <div class="card-label">Tasa de ahorro · mes</div>
+        <div class="card-value" :class="(salud?.mes?.tasa_ahorro ?? 0) >= 20 ? 'positive' : (salud?.mes?.tasa_ahorro ?? 0) >= 0 ? 'neutral' : 'negative'"
+             x-text="salud?.mes?.tasa_ahorro != null ? salud.mes.tasa_ahorro.toFixed(1) + '%' : '—'"></div>
+        <div class="card-sub" x-text="salud ? 'Ahorraste ' + fmt(salud.mes.ahorro) : ''"></div>
+      </div>
+      <div class="card">
+        <div class="card-label" x-text="'Acumulado YTD ' + (salud?.ytd?.anio ?? '')"></div>
+        <div class="card-value" :class="(salud?.ytd?.ahorro ?? 0) >= 0 ? 'positive' : 'negative'"
+             x-text="fmt(salud?.ytd?.ahorro ?? 0)"></div>
+        <div class="card-sub" x-text="salud?.ytd?.tasa_ahorro != null ? salud.ytd.tasa_ahorro.toFixed(1) + '% del ingreso anual' : ''"></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Autonomía</div>
+        <div class="card-value" x-text="salud?.runway?.meses != null ? salud.runway.meses + ' meses' : '—'"></div>
+        <div class="card-sub" x-text="salud?.runway?.avg_gastos_6m ? 'A ' + fmt(salud.runway.avg_gastos_6m) + '/mes promedio' : ''"></div>
+      </div>
+    </div>
+
     <!-- INSIGHTS -->
     <div x-show="insights.length > 0">
       <div class="rule-label"><span>Notas del Contable</span></div>
@@ -986,6 +1065,36 @@
             <div style="flex:1;min-width:0">
               <div class="insight-title" x-text="i.title"></div>
               <div class="insight-text" :class="i.trend" x-text="i.text"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- POR MIEMBRO -->
+    <div x-show="distribucion?.miembros?.length > 0">
+      <div class="rule-label"><span>Per Membro</span></div>
+      <div class="grid-2 stagger">
+        <template x-for="m in distribucion.miembros" :key="m.miembro">
+          <div class="card">
+            <div class="card-label" x-text="m.miembro"></div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:14px;gap:14px">
+              <div>
+                <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.18em">Ingresos</div>
+                <div style="font-size:22px;font-weight:300;color:var(--ink);font-family:'Fraunces',Georgia,serif" x-text="fmt(m.ingresos)"></div>
+                <div style="font-size:10px;color:var(--ink3);font-family:'JetBrains Mono',monospace" x-text="m.pct_ingresos.toFixed(0) + '% del total'"></div>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.18em;text-align:right">Gastos</div>
+                <div style="font-size:22px;font-weight:300;color:var(--ink);font-family:'Fraunces',Georgia,serif;text-align:right" x-text="fmt(m.gastos)"></div>
+                <div style="font-size:10px;color:var(--ink3);font-family:'JetBrains Mono',monospace;text-align:right" x-text="m.pct_gastos.toFixed(0) + '% del total'"></div>
+              </div>
+            </div>
+            <div style="margin-top:14px">
+              <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:0.18em">Neto del mes</div>
+              <div :class="m.neto >= 0 ? 'positive' : 'negative'"
+                   style="font-size:18px;font-weight:300;font-family:'Fraunces',Georgia,serif"
+                   x-text="fmt(m.neto)"></div>
             </div>
           </div>
         </template>
@@ -1376,6 +1485,9 @@
         </template>
       </select>
       <input class="filter-input" placeholder="Subcategoría" x-model.debounce.400ms="mSub1" @input="loadMovimientos()">
+      <a class="form-btn" :href="'/api/export?anio='+anio+'&mes='+mes" download style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center">
+        ↓ CSV
+      </a>
     </div>
 
     <div class="card grid-full">
@@ -1503,6 +1615,14 @@
     </div>
 
     <div class="card grid-full" style="margin-top:24px">
+      <div class="section-title">Tasa de ahorro</div>
+      <p class="section-sub">% del ingreso ahorrado mes a mes — últimos 12 meses</p>
+      <div class="chart-wrap" style="height:280px">
+        <canvas id="ahorroChart" width="1200" height="420"></canvas>
+      </div>
+    </div>
+
+    <div class="card grid-full" style="margin-top:24px">
       <div class="section-title">Gasto por categoría</div>
       <p class="section-sub">Mes seleccionado, ranking</p>
       <template x-if="gastosLoading"><div class="spinner"></div></template>
@@ -1512,7 +1632,7 @@
       <template x-if="!gastosLoading && gastosPorCat.length > 0">
         <div>
           <template x-for="g in gastosPorCat" :key="g.subcategoria1">
-            <div class="budget-item">
+            <div class="budget-item" style="cursor:pointer" @click="openCategoria(g.subcategoria1)">
               <div class="budget-header">
                 <span class="budget-name" x-text="g.subcategoria1"></span>
                 <span class="budget-amounts" x-text="fmt(g.total)"></span>
@@ -1613,6 +1733,14 @@
       prestamosLoading: true,
       editPrestamoDlg: { show: false, prestamo: null, original: null, isNew: false },
 
+      // Salud financiera
+      salud: null,
+      tasaAhorroSerie: [],
+      distribucion: null,
+
+      // Drill-down de categoría
+      catDetail: { show: false, data: null },
+
       // Tarjeta
       selectedTarjetaId: null,
       cardSummary: null,
@@ -1640,7 +1768,7 @@
       confirmDlg: { show: false, title: '', msg: '', okLabel: 'Eliminar', _resolve: null },
       editDlg: { show: false, mov: null, original: null },
 
-      _pieChart: null, _barChart: null, _trendChart: null,
+      _pieChart: null, _barChart: null, _trendChart: null, _ahorroChart: null,
       _resizeObservers: {},
 
       // DEBUG state
@@ -1693,6 +1821,8 @@
         this.loadInsights();
         this.loadGastosFijos();
         this.loadPatrimonio();
+        this.loadSalud();
+        this.loadDistribucion();
       },
 
       monthLabel() {
@@ -1725,6 +1855,7 @@
         if (t === 'analisis') {
           this.loadComparativa();
           this.loadTendencia();
+          this.loadTasaAhorroHistorico();
         }
         if (t === 'dashboard' && this._pieChart) {
           requestAnimationFrame(() => requestAnimationFrame(() => this._pieChart && this._pieChart.resize()));
@@ -1737,6 +1868,63 @@
         }
       },
 
+      async loadSalud() {
+        try { this.salud = await this.api(`/salud-financiera`); } catch(e) {}
+      },
+      async loadDistribucion() {
+        try { this.distribucion = await this.api(`/distribucion-miembro?anio=${this.anio}&mes=${this.mes}`); } catch(e) {}
+      },
+      async openCategoria(sub1) {
+        if (!sub1) return;
+        this.catDetail.data = null;
+        this.catDetail.show = true;
+        try {
+          this.catDetail.data = await this.api(`/categoria/detalle?sub1=${encodeURIComponent(sub1)}&meses=12`);
+        } catch(e) {
+          this.catDetail.show = false;
+          this.showToast('Error: ' + (e.message || e), 'error');
+        }
+      },
+      async loadTasaAhorroHistorico() {
+        try {
+          this.tasaAhorroSerie = await this.api(`/tasa-ahorro-historico?meses=12`);
+          this._renderChart('ahorroChart', () => this.renderAhorro());
+        } catch(e) {}
+      },
+      renderAhorro() {
+        const c = document.getElementById('ahorroChart');
+        if (!c || this.tasaAhorroSerie.length === 0) return;
+        if (this._ahorroChart) { this._ahorroChart.destroy(); this._ahorroChart = null; }
+        const labels = this.tasaAhorroSerie.map(p => MONTHS_ES[p.mes-1].slice(0,3) + ' ' + String(p.anio).slice(2));
+        const data   = this.tasaAhorroSerie.map(p => p.tasa_ahorro);
+        this._ahorroChart = new Chart(c.getContext('2d'), {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              label: '% ahorro',
+              data,
+              backgroundColor: data.map(v => v == null ? 'rgba(168,161,149,0.3)'
+                                              : v >= 20 ? 'rgba(155,187,110,0.85)'
+                                              : v >= 0  ? 'rgba(212,180,120,0.85)'
+                                                        : 'rgba(194,102,72,0.85)'),
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: {
+                ticks: { callback: v => v + '%' },
+                grid:  { color: 'rgba(241,234,217,0.06)' },
+              },
+              x: { grid: { display: false } },
+            },
+          },
+        });
+      },
+
       onMonthChange() {
         this.mOffset = 0;
         this.loadBalance();
@@ -1745,8 +1933,10 @@
         this.loadGastosPorCat();
         this.loadInsights();
         this.loadGastosFijos();
+        this.loadSalud();
+        this.loadDistribucion();
         if (this.tab === 'movimientos') this.loadMovimientos();
-        if (this.tab === 'analisis') { this.loadComparativa(); this.loadTendencia(); }
+        if (this.tab === 'analisis') { this.loadComparativa(); this.loadTendencia(); this.loadTasaAhorroHistorico(); }
       },
 
       fmt(n) {
