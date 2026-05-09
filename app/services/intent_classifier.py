@@ -30,19 +30,30 @@ logger = logging.getLogger(__name__)
 _RE_MONTO        = re.compile(r"\d+(?:[.,]\d+)?\s*(?:€|eur|euros?|usd?\$)", re.IGNORECASE)
 _RE_VERBO_GASTO  = re.compile(r"\b(?:gast[éeo]|pagu[éeo]|cobr[éeo]|cobr[óo]|recib[íi])\b", re.IGNORECASE)
 _RE_VERBO_COMPRA = re.compile(r"\b(?:anota[mr]?e?|necesito|comprar|agreg[áa]me?|agregar|sum[áa]me?|agreg[áa] a la lista|para la lista)\b", re.IGNORECASE)
+# Marcadores temporales típicos de eventos
+_RE_DIA_FUTURO   = re.compile(r"\b(?:hoy|mañana|pasado|lunes|martes|mi[eé]rcoles|jueves|viernes|s[áa]bado|domingo|el d[íi]a \d{1,2}|el \d{1,2})\b", re.IGNORECASE)
+_RE_HORA         = re.compile(r"\b\d{1,2}\s*(?::\d{2}\s*)?(?:hs|hrs|am|pm|de la (?:mañana|tarde|noche))\b|\bA?\s*las\s+\d{1,2}", re.IGNORECASE)
+_RE_PALABRA_EVENTO = re.compile(r"\b(?:turno|reuni[óo]n|cita|cumple|evento|consulta|análisis|control|tr[áa]mite|ir al?|tengo)\b", re.IGNORECASE)
 
 
 def classify_quick(text: str) -> str | None:
-    """Heurística sin LLM. Devuelve 'transaction', 'shopping' o None (indeciso)."""
+    """Heurística sin LLM. Devuelve 'transaction', 'shopping', 'event' o None."""
     t = text.strip().lower()
     if not t:
         return None
-    has_amount = bool(_RE_MONTO.search(t))
-    has_compra = bool(_RE_VERBO_COMPRA.search(t))
-    has_gasto  = bool(_RE_VERBO_GASTO.search(t))
+    has_amount  = bool(_RE_MONTO.search(t))
+    has_compra  = bool(_RE_VERBO_COMPRA.search(t))
+    has_gasto   = bool(_RE_VERBO_GASTO.search(t))
+    has_dia     = bool(_RE_DIA_FUTURO.search(t))
+    has_hora    = bool(_RE_HORA.search(t))
+    has_evento  = bool(_RE_PALABRA_EVENTO.search(t))
 
+    # Gasto explícito gana
     if has_amount and has_gasto:
         return "transaction"
+    # Evento: marcador temporal + (palabra de evento o hora)
+    if has_dia and (has_evento or has_hora) and not has_amount:
+        return "event"
     if has_compra and not has_amount:
         return "shopping"
     if has_amount and not has_compra:

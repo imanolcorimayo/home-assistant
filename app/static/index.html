@@ -687,6 +687,56 @@
     </div>
   </div>
 
+  <!-- EVENTO MODAL -->
+  <div class="modal-backdrop" x-show="eventDlg.show" @click.self="eventDlg.show = false" x-cloak>
+    <div class="modal modal-lg" x-show="eventDlg.show">
+      <h3 x-text="eventDlg.isNew ? 'Nuevo evento' : 'Editar evento'"></h3>
+      <div class="modal-form">
+        <div class="full">
+          <label>Título</label>
+          <input class="filter-input" type="text" x-model="eventDlg.data.titulo" placeholder="ej. Dentista Sofía">
+        </div>
+        <div>
+          <label>Fecha</label>
+          <input class="filter-input" type="date" x-model="eventDlg.data.fecha">
+        </div>
+        <div>
+          <label>Hora <span style="color:var(--ink3);font-weight:400">(opcional)</span></label>
+          <input class="filter-input" type="time" x-model="eventDlg.data.hora">
+        </div>
+        <div>
+          <label>Categoría</label>
+          <select class="filter-input" x-model="eventDlg.data.categoria">
+            <option value="medico">🏥 Médico</option>
+            <option value="colegio">🏫 Colegio</option>
+            <option value="burocracia">📋 Burocracia</option>
+            <option value="familia">👨‍👩‍👧 Familia</option>
+            <option value="otro">📅 Otro</option>
+          </select>
+        </div>
+        <div>
+          <label>Avisar (horas antes)</label>
+          <input class="filter-input" type="number" min="0" max="168" x-model.number="eventDlg.data.recordatorio_horas_antes">
+        </div>
+        <div class="full">
+          <label>Ubicación</label>
+          <input class="filter-input" type="text" x-model="eventDlg.data.ubicacion" placeholder="ej. Clínica Sant'Anna">
+        </div>
+        <div class="full">
+          <label>Descripción</label>
+          <input class="filter-input" type="text" x-model="eventDlg.data.descripcion">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <template x-if="!eventDlg.isNew">
+          <button class="form-btn-del" @click="deleteEvento(eventDlg.data)">Eliminar</button>
+        </template>
+        <button class="form-btn-ghost" @click="eventDlg.show = false">Cancelar</button>
+        <button class="form-btn" @click="saveEvento()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ATTACHMENTS MODAL -->
   <div class="modal-backdrop" x-show="attDlg.show" @click.self="attDlg.show = false" x-cloak>
     <div class="modal modal-lg" x-show="attDlg.show">
@@ -1030,6 +1080,7 @@
     <div class="nav-tabs">
       <button class="nav-tab" :class="{ active: tab === 'dashboard' }" @click="switchTab('dashboard')">Bilancio</button>
       <button class="nav-tab" :class="{ active: tab === 'cuentas' }" @click="switchTab('cuentas')">Cuentas</button>
+      <button class="nav-tab" :class="{ active: tab === 'agenda' }" @click="switchTab('agenda')">Agenda</button>
       <button class="nav-tab" :class="{ active: tab === 'compras' }" @click="switchTab('compras')">Compras</button>
       <button class="nav-tab" :class="{ active: tab === 'pendientes' }" @click="switchTab('pendientes')">Pendientes</button>
       <button class="nav-tab" :class="{ active: tab === 'tarjeta' }" @click="switchTab('tarjeta')">Tarjeta</button>
@@ -1325,6 +1376,58 @@
                   </template>
                 </div>
               </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========== AGENDA ========== -->
+  <div class="page" :class="{ active: tab === 'agenda' }">
+    <div class="rule-label"><span>Calendario di Famiglia</span></div>
+
+    <div class="card grid-full">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px">
+        <div>
+          <div class="section-title">Próximos eventos</div>
+          <p class="section-sub" style="margin:0">Médicos, colegio, burocracia, familia · recordatorios automáticos por Telegram</p>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <select class="filter-input" x-model="agendaRange" @change="loadEventos()">
+            <option value="7">Próximos 7 días</option>
+            <option value="14">Próximos 14 días</option>
+            <option value="30">Próximos 30 días</option>
+            <option value="90">Próximos 90 días</option>
+          </select>
+          <button class="form-btn" @click="openNewEvento()">+ Nuevo</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card grid-full" style="margin-top:24px">
+      <template x-if="eventos.length === 0">
+        <div class="empty">Sin eventos en este rango</div>
+      </template>
+      <template x-for="(grupo, fecha) in eventosByDay()" :key="fecha">
+        <div style="margin-bottom:18px">
+          <div style="font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:0.24em;font-weight:600;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--hairline-strong)"
+               x-text="fmtFechaLarga(fecha)"></div>
+          <template x-for="ev in grupo" :key="ev.id">
+            <div class="budget-item" style="cursor:pointer" @click="openEditEvento(ev)">
+              <div class="budget-header">
+                <span class="budget-name">
+                  <span x-text="iconoCategoria(ev.categoria) + ' ' + ev.titulo"></span>
+                </span>
+                <span class="budget-amounts" style="font-family:'JetBrains Mono',monospace;font-size:13px"
+                      x-text="ev.hora || 'todo el día'"></span>
+              </div>
+              <div style="font-size:11px;color:var(--ink3);font-family:'JetBrains Mono',monospace;margin-top:6px">
+                <span style="text-transform:uppercase;letter-spacing:0.18em" x-text="ev.categoria"></span>
+                <template x-if="ev.ubicacion"><span> · <span x-text="ev.ubicacion"></span></span></template>
+                <template x-if="ev.recordatorio_horas_antes"><span> · ⏰ <span x-text="ev.recordatorio_horas_antes + 'h antes'"></span></span></template>
+              </div>
+              <div x-show="ev.descripcion" style="font-size:12px;color:var(--ink2);margin-top:6px" x-text="ev.descripcion"></div>
             </div>
           </template>
         </div>
@@ -1948,6 +2051,11 @@
       // Drill-down de categoría
       catDetail: { show: false, data: null },
 
+      // Agenda
+      eventos: [],
+      agendaRange: '14',
+      eventDlg: { show: false, isNew: true, data: {} },
+
       // Lista de compras
       compras: [],
       newCompra: '',
@@ -2077,6 +2185,9 @@
         if (t === 'compras') {
           this.loadCompras();
         }
+        if (t === 'agenda') {
+          this.loadEventos();
+        }
         if (t === 'analisis') {
           this.loadComparativa();
           this.loadTendencia();
@@ -2096,6 +2207,99 @@
       async loadSalud() {
         try { this.salud = await this.api(`/salud-financiera`); } catch(e) {}
       },
+      // ───── Agenda ─────
+      iconoCategoria(c) {
+        return { medico: '🏥', colegio: '🏫', burocracia: '📋', familia: '👨‍👩‍👧', otro: '📅' }[c] || '📅';
+      },
+      fmtFechaLarga(iso) {
+        const d = new Date(iso + 'T00:00:00');
+        const dias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+        const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+        const today = new Date(); today.setHours(0,0,0,0);
+        const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+        if (d.getTime() === today.getTime())    return 'Hoy · ' + d.getDate() + ' de ' + meses[d.getMonth()];
+        if (d.getTime() === tomorrow.getTime()) return 'Mañana · ' + d.getDate() + ' de ' + meses[d.getMonth()];
+        return dias[d.getDay()] + ' ' + d.getDate() + ' de ' + meses[d.getMonth()];
+      },
+      eventosByDay() {
+        const out = {};
+        for (const ev of this.eventos) {
+          if (!out[ev.fecha]) out[ev.fecha] = [];
+          out[ev.fecha].push(ev);
+        }
+        return out;
+      },
+      async loadEventos() {
+        const today = new Date().toISOString().slice(0,10);
+        const hasta = new Date(); hasta.setDate(hasta.getDate() + parseInt(this.agendaRange));
+        const hastaStr = hasta.toISOString().slice(0,10);
+        try {
+          this.eventos = await this.api(`/eventos?desde=${today}&hasta=${hastaStr}`);
+        } catch(e) {}
+      },
+      openNewEvento() {
+        const today = new Date().toISOString().slice(0,10);
+        this.eventDlg.isNew = true;
+        this.eventDlg.data = {
+          titulo: '',
+          fecha: today,
+          hora: '',
+          categoria: 'medico',
+          recordatorio_horas_antes: 24,
+          ubicacion: '',
+          descripcion: '',
+        };
+        this.eventDlg.show = true;
+      },
+      openEditEvento(ev) {
+        this.eventDlg.isNew = false;
+        this.eventDlg.data = { ...ev };
+        this.eventDlg.show = true;
+      },
+      async saveEvento() {
+        const d = this.eventDlg.data;
+        if (!d.titulo || !d.fecha) {
+          this.showToast('Completá título y fecha', 'error'); return;
+        }
+        const body = {
+          titulo: d.titulo, fecha: d.fecha,
+          categoria: d.categoria || 'otro',
+          recordatorio_horas_antes: d.recordatorio_horas_antes ?? 2,
+        };
+        if (d.hora)        body.hora = d.hora;
+        if (d.ubicacion)   body.ubicacion = d.ubicacion;
+        if (d.descripcion) body.descripcion = d.descripcion;
+        try {
+          if (this.eventDlg.isNew) {
+            const r = await this.api(`/evento`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            this.showToast(`✓ Evento creado · ${r.recordatorios_encolados} recordatorio(s) agendado(s)`, 'success');
+          } else {
+            await this.api(`/evento/${d.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            this.showToast('Evento actualizado', 'success');
+          }
+          this.eventDlg.show = false;
+          await this.loadEventos();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+      async deleteEvento(ev) {
+        const ok = await this.confirm(`¿Eliminar evento "${ev.titulo}"?`,
+                                       { title: 'Eliminar evento', okLabel: 'Eliminar' });
+        if (!ok) return;
+        try {
+          await this.api(`/evento/${ev.id}`, { method: 'DELETE' });
+          this.eventDlg.show = false;
+          await this.loadEventos();
+        } catch(e) { this.showToast('Error: ' + (e.message || e), 'error'); }
+      },
+
       // ───── Lista de compras ─────
       async loadCompras() {
         try { this.compras = await this.api(`/compras?incluir_completados=true`); } catch(e) {}

@@ -31,6 +31,96 @@ _PENDING_TX_TTL = 300
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=120, time_limit=180)
+def process_event_message(self, text_msg: str, chat_id: int, user_id: str) -> None:
+    """Extrae eventos del texto vía LLM y los inserta en events.
+
+    Para cada evento: encola recordatorio según `recordatorio_horas_antes`
+    (default por categoría: medico/colegio/burocracia=24h, familia/otro=2h).
+    """
+    DEFAULT_HOURS = {"medico": 24, "colegio": 24, "burocracia": 24, "familia": 2, "otro": 2}
+    icon_map = {"medico": "🏥", "colegio": "🏫", "burocracia": "📋",
+                "familia": "👨‍👩‍👧", "otro": "📅"}
+
+    eventos = ollama_client.extract_events(text_msg)
+    if not eventos:
+        telegram_client.send_message_sync(chat_id, "🤔 No reconocí ningún evento. Probá ser más explícito con la fecha.")
+        return
+
+    creados = []
+    with SyncSessionLocal() as db:
+        for ev in eventos:
+            try:
+                rec_h = DEFAULT_HOURS.get(ev.get("categoria", "otro"), 2)
+                r = db.execute(sa_text("""
+                    INSERT INTO events
+                        (titulo, fecha, hora, categoria, descripcion, ubicacion,
+                         recordatorio_horas_antes, created_by)
+                    VALUES (:t, :f, :h, :c, :d, :u, :rh, :cb)
+                    RETURNING id, titulo, fecha, hora, categoria, ubicacion
+                """), {
+                    "t": ev["titulo"], "f": ev["fecha"], "h": ev.get("hora"),
+                    "c": ev.get("categoria", "otro"),
+                    "d": ev.get("descripcion"), "u": ev.get("ubicacion"),
+                    "rh": rec_h, "cb": uuid.UUID(user_id),
+                }).first()
+                creados.append(r)
+            except Exception as exc:
+                logger.warning("INSERT event falló (%s): %s", ev, exc)
+        db.commit()
+
+    if not creados:
+        telegram_client.send_message_sync(chat_id, "🤔 No pude guardar los eventos extraídos.")
+        return
+
+    # Encolar recordatorios para cada evento creado
+    from datetime import datetime as _dt, time as _time, timedelta as _td
+    with SyncSessionLocal() as db:
+        miembros = db.execute(sa_text(
+            "SELECT telegram_user_id FROM family_members WHERE telegram_user_id IS NOT NULL AND is_active"
+        )).all()
+        for r in creados:
+            ev_full = db.execute(sa_text("""
+                SELECT recordatorio_horas_antes FROM events WHERE id = :id
+            """), {"id": r.id}).first()
+            rec_h = ev_full.recordatorio_horas_antes if ev_full else 2
+            if rec_h <= 0:
+                continue
+            scheduled = (_dt.combine(r.fecha, r.hora) - _td(hours=rec_h)) if r.hora \
+                        else (_dt.combine(r.fecha, _time(8, 0)) - _td(days=1))
+            if scheduled <= _dt.now():
+                continue
+            ico = icon_map.get(r.categoria, "📅")
+            hora_str = r.hora.strftime("%H:%M") if r.hora else "todo el día"
+            ttl = f"{ico} {r.titulo}"
+            bdy = f"{r.fecha.strftime('%d/%m')} · {hora_str}"
+            if r.ubicacion:
+                bdy += f" · {r.ubicacion}"
+            for m in miembros:
+                db.execute(sa_text("""
+                    INSERT INTO notifications
+                        (target_chat_id, kind, title, body, scheduled_at,
+                         related_entity_type, related_entity_id, dedupe_key)
+                    VALUES (:cid, 'reminder', :t, :b, :s, 'event', :ei, :dk)
+                    ON CONFLICT (dedupe_key) DO NOTHING
+                """), {
+                    "cid": m.telegram_user_id, "t": ttl, "b": bdy, "s": scheduled,
+                    "ei": r.id,
+                    "dk": f"event-{r.id}-{m.telegram_user_id}-{scheduled.isoformat()}",
+                })
+        db.commit()
+
+    icon_lines = []
+    for r in creados:
+        ico = icon_map.get(r.categoria, "📅")
+        hora_s = r.hora.strftime("%H:%M") if r.hora else "todo el día"
+        icon_lines.append(f"{ico} {r.titulo} · {r.fecha.strftime('%a %d/%m')} {hora_s}")
+    telegram_client.send_message_sync(
+        chat_id,
+        f"📅 Agendado{'s' if len(creados)!=1 else ''} ({len(creados)}):\n" + "\n".join(icon_lines)
+    )
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=120, time_limit=180)
 def process_shopping_message(self, text_msg: str, chat_id: int, user_id: str) -> None:
     """Extrae items de compra del texto vía LLM y los inserta en shopping_list_items."""
     from sqlalchemy import text as sa_t
@@ -335,6 +425,55 @@ def schedule_due_reminders() -> int:
 
     if encolados:
         logger.info("Recordatorios encolados: %d", encolados)
+    return encolados
+
+
+@celery_app.task(name="app.workers.finance_tasks.schedule_daily_agenda")
+def schedule_daily_agenda() -> int:
+    """Beat-scheduled diario 08:00: si hay eventos hoy, manda un resumen."""
+    from datetime import date
+
+    today = date.today()
+    encolados = 0
+    with SyncSessionLocal() as db:
+        eventos = db.execute(sa_text("""
+            SELECT titulo, hora, categoria, ubicacion
+            FROM events
+            WHERE deleted_at IS NULL AND fecha = :d
+            ORDER BY hora NULLS LAST
+        """), {"d": today}).all()
+        if not eventos:
+            return 0
+
+        targets = db.execute(sa_text(
+            "SELECT telegram_user_id FROM family_members WHERE telegram_user_id IS NOT NULL"
+        )).all()
+
+        icon_map = {"medico": "🏥", "colegio": "🏫", "burocracia": "📋",
+                    "familia": "👨‍👩‍👧", "otro": "📅"}
+        lines = []
+        for e in eventos:
+            ico = icon_map.get(e.categoria, "📅")
+            hora_s = e.hora.strftime("%H:%M") if e.hora else "—"
+            line = f"{ico} {hora_s} · {e.titulo}"
+            if e.ubicacion:
+                line += f" ({e.ubicacion})"
+            lines.append(line)
+
+        title = f"📅 Agenda de hoy ({len(eventos)})"
+        body = "\n".join(lines)
+
+        for t in targets:
+            dk = f"agenda-{today.isoformat()}-{t.telegram_user_id}"
+            res = notification_dispatcher.enqueue(
+                target_chat_id=t.telegram_user_id,
+                kind="reminder",
+                title=title, body=body, dedupe_key=dk,
+            )
+            if res: encolados += 1
+
+    if encolados:
+        logger.info("Agenda diaria encolada para %d destinos", encolados)
     return encolados
 
 

@@ -54,6 +54,10 @@ celery_app.conf.update(
             "task": "app.workers.finance_tasks.schedule_monthly_summary",
             "schedule": crontab(day_of_month=1, hour=9, minute=0),
         },
+        "schedule-daily-agenda": {
+            "task": "app.workers.finance_tasks.schedule_daily_agenda",
+            "schedule": crontab(hour=8, minute=0),
+        },
     },
 )
 

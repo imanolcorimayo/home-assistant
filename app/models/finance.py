@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Numeric, String, Text, Time
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -74,6 +74,27 @@ class InstallmentPlan(Base):
     subcategoria2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     activo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
+class Event(Base):
+    __tablename__ = "events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    titulo: Mapped[str] = mapped_column(Text, nullable=False)
+    fecha: Mapped[date] = mapped_column(Date, nullable=False)
+    hora: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
+    fin_fecha: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    fin_hora: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
+    categoria: Mapped[str] = mapped_column(Text, nullable=False, default="otro")
+    descripcion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ubicacion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    recordatorio_horas_antes: Mapped[int] = mapped_column(nullable=False, default=2)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id"), nullable=True
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 

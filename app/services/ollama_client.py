@@ -263,6 +263,95 @@ def extract_shopping_items(text: str) -> list[dict]:
         return []
 
 
+_EVENT_PROMPT = """\
+Sos un asistente que organiza la agenda de una familia italiana de habla
+española en {today_dow} {today}. El usuario te dicta uno o más eventos en español.
+Devuelve EXCLUSIVAMENTE un JSON con este formato:
+
+{{
+  "eventos": [
+    {{
+      "titulo": "<corto, ej. 'Dentista Sofía' o 'Reunión escuela'>",
+      "fecha": "YYYY-MM-DD",
+      "hora": "HH:MM" o null,
+      "categoria": "medico|colegio|burocracia|familia|otro",
+      "descripcion": "<detalle libre o null>",
+      "ubicacion": "<lugar o null>"
+    }}
+  ]
+}}
+
+Reglas para fecha:
+- "hoy" = {today}, "mañana" = mañana, "pasado" = +2 días.
+- "el lunes/martes/...": el próximo día de la semana >= hoy.
+- "el 15", "el 23 de mayo" → ese día (asumir mes actual si no se especifica, o el más cercano futuro).
+- Si no se menciona fecha clara → omitir el evento.
+
+Reglas para hora:
+- "10hs", "10:30", "a las 10", "10 de la mañana" → "10:00", "10:30".
+- "tarde": null (mejor null que adivinar).
+- "de noche": null.
+
+Reglas para categoría:
+- dentista/médico/pediatra/turno/análisis/farmacia/cirugía → medico
+- colegio/escuela/profesora/reunión escolar/clase de... → colegio
+- trámite/AFIP/banco/notaría/oficina pública → burocracia
+- cumple/asado/cena familiar/visita → familia
+- resto → otro
+
+Si no hay eventos extraíbles: {{"eventos": []}}.
+
+Mensaje: "{text}"
+JSON:
+"""
+
+
+def extract_events(text: str) -> list[dict]:
+    """Extrae eventos del texto. Devuelve lista de dicts."""
+    today = date.today()
+    nombres_dia = ['lunes','martes','miércoles','jueves','viernes','sábado','domingo']
+    prompt = _EVENT_PROMPT.format(
+        text=text,
+        today=today.isoformat(),
+        today_dow=nombres_dia[today.weekday()],
+    )
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{settings.ollama_url}/api/generate",
+                json={
+                    "model": settings.ollama_model,
+                    "prompt": prompt,
+                    "format": "json",
+                    "stream": False,
+                    "keep_alive": "5m",
+                    "options": {"num_ctx": 1536, "num_predict": 384, "temperature": 0.1},
+                },
+            )
+            resp.raise_for_status()
+        data = json.loads(resp.json()["response"])
+        eventos = data.get("eventos", []) if isinstance(data, dict) else []
+        cleaned = []
+        for e in eventos:
+            if not isinstance(e, dict) or not e.get("titulo") or not e.get("fecha"):
+                continue
+            cat = e.get("categoria") or "otro"
+            if cat not in {"medico", "colegio", "burocracia", "familia", "otro"}:
+                cat = "otro"
+            cleaned.append({
+                "titulo":      str(e["titulo"])[:120],
+                "fecha":       str(e["fecha"]),
+                "hora":        e.get("hora"),
+                "categoria":   cat,
+                "descripcion": e.get("descripcion"),
+                "ubicacion":   e.get("ubicacion"),
+            })
+        return cleaned
+    except Exception as exc:
+        logger.warning("extract_events falló: %s", exc)
+        return []
+
+
 def warm_up() -> None:
     """Pre-carga el modelo de Ollama en RAM para evitar el cold start de la 1ª dictada.
 

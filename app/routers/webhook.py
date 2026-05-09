@@ -101,6 +101,9 @@ async def telegram_webhook(
         if quick == "shopping":
             from app.workers.finance_tasks import process_shopping_message
             process_shopping_message.delay(msg.text, chat_id, user_id)
+        elif quick == "event":
+            from app.workers.finance_tasks import process_event_message
+            process_event_message.delay(msg.text, chat_id, user_id)
         else:
             # 'transaction' o indeciso → flujo actual (LLM extrae transactions;
             # si no hay, ya tira "no encontré movimientos").
@@ -136,6 +139,8 @@ async def _handle_command(
         await _cmd_notif(args, member, chat_id, db)
     elif cmd == "/compras":
         await _cmd_compras(args, member, chat_id, db)
+    elif cmd == "/agenda":
+        await _cmd_agenda(args, member, chat_id, db)
     elif cmd == "/ayuda":
         await send_message(
             chat_id,
@@ -151,6 +156,8 @@ async def _handle_command(
             "/compras      — lista de compras (familiar)\n"
             "/compras add leche, pan, 2kg de tomate\n"
             "/compras done — marca todos como comprados (volviste del super)\n"
+            "/agenda       — eventos próximos 7 días\n"
+            "/agenda hoy | manana | semana\n"
             "/undo         — eliminar el último movimiento registrado\n"
             "/ayuda        — esta ayuda",
         )
@@ -505,6 +512,57 @@ async def _cmd_notif(args: str, member: FamilyMember, chat_id: int, db: AsyncSes
     lines.append("")
     lines.append("Para cambiar: /notif on|off [tipo]")
     lines.append("Tipos: budget, reminder, resumen, anomalia")
+    await send_message(chat_id, "\n".join(lines))
+
+
+async def _cmd_agenda(args: str, member: FamilyMember, chat_id: int, db: AsyncSession) -> None:
+    """
+    /agenda            — próximos 7 días
+    /agenda hoy        — eventos de hoy
+    /agenda manana     — eventos de mañana
+    /agenda semana     — próximos 7 días (default)
+    /agenda mes        — próximos 30 días
+    """
+    from datetime import timedelta as _td
+    arg = args.strip().lower() if args else ""
+    today = datetime.now().date()
+
+    if arg == "hoy":
+        desde, hasta, label = today, today, "Hoy"
+    elif arg in ("manana", "mañana"):
+        m = today + _td(days=1)
+        desde, hasta, label = m, m, "Mañana"
+    elif arg == "mes":
+        desde, hasta, label = today, today + _td(days=30), "Próximos 30 días"
+    else:
+        desde, hasta, label = today, today + _td(days=7), "Próximos 7 días"
+
+    rows = (await db.execute(text("""
+        SELECT titulo, fecha, hora, categoria, ubicacion
+        FROM events
+        WHERE deleted_at IS NULL AND fecha BETWEEN :d AND :h
+        ORDER BY fecha, hora NULLS LAST
+        LIMIT 100
+    """), {"d": desde, "h": hasta})).all()
+
+    if not rows:
+        await send_message(chat_id, f"📅 {label}: sin eventos.")
+        return
+
+    icon_map = {"medico": "🏥", "colegio": "🏫", "burocracia": "📋",
+                "familia": "👨‍👩‍👧", "otro": "📅"}
+    nombres_dia = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom']
+    lines = [f"📅 {label} ({len(rows)}):"]
+    last_date = None
+    for r in rows:
+        if r.fecha != last_date:
+            lines.append("")
+            lines.append(f"{nombres_dia[r.fecha.weekday()]} {r.fecha.strftime('%d/%m')}")
+            last_date = r.fecha
+        ico = icon_map.get(r.categoria, "📅")
+        hora_s = r.hora.strftime("%H:%M") if r.hora else "—  "
+        loc = f" ({r.ubicacion})" if r.ubicacion else ""
+        lines.append(f"  {hora_s} {ico} {r.titulo}{loc}")
     await send_message(chat_id, "\n".join(lines))
 
 
