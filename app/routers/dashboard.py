@@ -505,13 +505,15 @@ async def get_salud_financiera(db: AsyncSession = Depends(get_db)):
 @router.get("/tasa-ahorro-historico")
 async def get_tasa_ahorro_historico(meses: int = Query(default=12, ge=1, le=36),
                                      db: AsyncSession = Depends(get_db)):
-    """Evolución mensual de la tasa de ahorro: últimos N meses con datos."""
+    """Evolución mensual de la tasa de ahorro: últimos N meses con datos (solo pasado)."""
+    today = datetime.now().date()
     rows = (await db.execute(text("""
         SELECT anio, mes, ingresos, gastos, balance
         FROM v_balance_mensual
+        WHERE (anio < :a) OR (anio = :a AND mes <= :m)
         ORDER BY anio DESC, mes DESC
         LIMIT :n
-    """), {"n": meses})).all()
+    """), {"a": today.year, "m": today.month, "n": meses})).all()
 
     series = []
     for r in reversed(rows):
@@ -626,7 +628,14 @@ async def get_anomalias(db: AsyncSession = Depends(get_db)):
 
 @router.get("/recurrencias-detectadas")
 async def get_recurrencias_detectadas(db: AsyncSession = Depends(get_db)):
-    """Patrones (sub1, sub2, monto aprox) que se repiten ≥3 meses y no están como recurring_charges."""
+    """Patrones (sub1, sub2, monto aprox) que se repiten ≥3 meses y son
+    candidatos razonables a suscripción.
+
+    Filtra:
+    - Categorías que ya son recurrentes por naturaleza (Gastos Fijos)
+    - Subcategorías muy genéricas (Supermercado: tiene compras múltiples por mes)
+    - Montos pequeños (<€10) — ruido estadístico
+    """
     rows = (await db.execute(text("""
         WITH meses AS (
             SELECT DISTINCT
@@ -641,7 +650,11 @@ async def get_recurrencias_detectadas(db: AsyncSession = Depends(get_db)):
               AND loan_id IS NULL
               AND installment_plan_id IS NULL
               AND card_statement_id IS NULL
+              AND categoria <> 'Gastos Fijos'
+              AND subcategoria1 NOT IN ('Supermercado', 'Vestimenta', 'Bazar')
+              AND amount >= 10
               AND transaction_date >= CURRENT_DATE - INTERVAL '6 months'
+              AND transaction_date <= CURRENT_DATE
         ),
         agrupado AS (
             SELECT subcategoria1, subcategoria2, monto_aprox,
@@ -905,11 +918,10 @@ async def get_insights(
         text("""
             SELECT
                 COUNT(*) AS n,
-                SUM(cuotas_restantes * monto_cuota) AS pendiente,
-                SUM(cuotas_restantes * monto_cuota) FILTER (WHERE TRUE) AS _,
+                SUM(GREATEST(cuotas_total - cuotas_generadas, 0) * monto_cuota) AS pendiente,
                 SUM(monto_cuota) AS cuota_mensual
             FROM v_loans_status
-            WHERE activo AND cuotas_restantes > 0
+            WHERE activo AND cuotas_total > cuotas_generadas
         """),
     )).first()
     if prestamos and prestamos.n and int(prestamos.n) > 0:
@@ -961,7 +973,11 @@ async def get_insights(
             WHERE deleted_at IS NULL AND tipo='gasto'
               AND recurring_charge_id IS NULL AND loan_id IS NULL
               AND installment_plan_id IS NULL AND card_statement_id IS NULL
+              AND categoria <> 'Gastos Fijos'
+              AND subcategoria1 NOT IN ('Supermercado', 'Vestimenta', 'Bazar')
+              AND amount >= 10
               AND transaction_date >= CURRENT_DATE - INTERVAL '6 months'
+              AND transaction_date <= CURRENT_DATE
         )
         SELECT subcategoria1, sub2, monto, COUNT(DISTINCT (y, m)) AS meses
         FROM meses
@@ -1055,7 +1071,10 @@ async def get_patrimonio(db: AsyncSession = Depends(get_db)):
 # ─────────────────────────────────────────────────────────────────
 
 def _row_to_prestamo(r) -> dict:
-    cuotas_restantes = int(r.cuotas_restantes)
+    cuotas_total     = int(r.cuotas_total)
+    cuotas_generadas = int(r.cuotas_generadas)
+    # cuotas_restantes = las que aún faltan generar (saldo real pendiente)
+    cuotas_restantes = max(cuotas_total - cuotas_generadas, 0)
     monto_cuota = float(r.monto_cuota)
     monto_ult = float(r.monto_ultima_cuota) if r.monto_ultima_cuota is not None else None
     if monto_ult is not None and cuotas_restantes >= 1:
@@ -1074,9 +1093,9 @@ def _row_to_prestamo(r) -> dict:
         "fecha_fin": r.fecha_fin.isoformat() if r.fecha_fin else None,
         "notas": r.notas,
         "activo": r.activo,
-        "cuotas_total": int(r.cuotas_total),
+        "cuotas_total": cuotas_total,
         "cuotas_restantes": cuotas_restantes,
-        "cuotas_generadas": int(r.cuotas_generadas),
+        "cuotas_generadas": cuotas_generadas,
         "saldo_pendiente": round(saldo_pendiente, 2),
     }
 
