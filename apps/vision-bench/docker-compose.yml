@@ -1,0 +1,60 @@
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: vision_bench_ollama
+    # Different host port (11436) so this doesn't collide with the
+    # SovereignBox Ollama (11434) running from the repo root.
+    ports:
+      - "11436:11434"
+    volumes:
+      - vision_bench_ollama_data:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 5g
+
+  web:
+    build: ./web
+    container_name: vision_bench_web
+    ports:
+      - "8091:8080"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
+      BASIC_AUTH_PASS: ${BASIC_AUTH_PASS}
+    volumes:
+      - ./images:/app/images
+      - ./results.csv:/app/results.csv
+      - paddleocr_cache:/root/.paddleocr
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  # Cloudflare Tunnel — outbound-only connection to Cloudflare's edge.
+  # No inbound ports open; route is configured in the Cloudflare dashboard.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: vision_bench_tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    depends_on:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+volumes:
+  # Pinned to the volume names created by the previous location
+  # (~/projects/ollama-vision-bench/, project prefix "ollama-vision-bench").
+  # This way the first `docker compose up` from the new location reuses the
+  # existing Ollama model (~2 GB) and PaddleOCR cache instead of re-downloading.
+  vision_bench_ollama_data:
+    name: ollama-vision-bench_vision_bench_ollama_data
+  paddleocr_cache:
+    name: ollama-vision-bench_paddleocr_cache

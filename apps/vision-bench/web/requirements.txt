@@ -1,0 +1,16 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+httpx==0.27.2
+python-multipart==0.0.12
+
+# Python 3.12 no longer ships setuptools by default. PaddlePaddle's loader
+# imports `pkg_resources` (which lives in setuptools) at runtime, so we add
+# it explicitly to avoid "No module named 'setuptools'" at first OCR call.
+setuptools>=68.0
+
+# OCR pipeline. paddlepaddle is the runtime (CPU-only build); paddleocr is the wrapper
+# around the detection + recognition models. Pinned below 3.0 — the v3 API has
+# breaking changes vs the documented v2 patterns we use.
+paddleocr>=2.7,<3.0
+paddlepaddle>=2.6,<3.0
+pillow==10.4.0

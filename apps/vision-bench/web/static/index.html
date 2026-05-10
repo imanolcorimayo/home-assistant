@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screenshot extractor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #181b22;
+      --panel-2: #1f2530;
+      --border: #2a2f3a;
+      --border-bright: #3a4255;
+      --text: #e7e9ee;
+      --muted: #8b93a7;
+      --accent: #7aa2ff;
+      --accent-soft: rgba(122, 162, 255, 0.12);
+      --bad: #ef6677;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+    }
+    h1 {
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin: 0 0 20px;
+      font-weight: 600;
+    }
+
+    /* ── dropzone ── */
+    .drop {
+      display: block;
+      width: 100%;
+      border: 2px dashed var(--border-bright);
+      border-radius: 12px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      background: var(--panel);
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .drop:hover { border-color: var(--accent); }
+    .drop.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .drop-input { display: none; }
+    .drop-title { color: var(--text); font-size: 15px; margin: 0; }
+    .drop-title strong { color: var(--text); }
+    .drop-hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+    .preview-wrap { margin-top: 18px; display: flex; justify-content: center; }
+    .preview {
+      max-width: 100%;
+      max-height: 280px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    /* ── controls ── */
+    .controls {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      margin-top: 18px;
+    }
+    button {
+      background: var(--accent);
+      color: #0a0d14;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 22px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    a { color: var(--accent); }
+
+    #status {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      min-height: 20px;
+    }
+
+    /* ── result card ── */
+    #results { margin-top: 18px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      font-family: ui-monospace, monospace;
+      color: var(--text);
+      font-weight: 600;
+    }
+    .timings {
+      display: flex;
+      gap: 14px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .timings .total { color: var(--accent); font-weight: 600; }
+    .field {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .field:last-of-type { border-bottom: 0; }
+    .field .k {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      align-self: center;
+    }
+    .field .v { word-break: break-word; }
+    details {
+      margin-top: 16px;
+      background: var(--panel-2);
+      border-radius: 6px;
+      padding: 10px 14px;
+    }
+    details > summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    details pre {
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 10px 0 0;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .err {
+      background: rgba(239, 102, 119, 0.1);
+      border: 1px solid rgba(239, 102, 119, 0.3);
+      color: var(--bad);
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      margin-bottom: 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Screenshot extractor</h1>
+
+  <div class="drop" id="drop" role="button" tabindex="0">
+    <input type="file" id="image-input" class="drop-input" accept="image/*">
+    <p class="drop-title"><strong>Drop a screenshot here</strong> or click to choose a file</p>
+    <p class="drop-hint">PNG / JPG / WEBP — also accepts Ctrl+V from clipboard</p>
+    <div class="preview-wrap">
+      <img id="preview" class="preview" alt="" hidden>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="run" type="button" disabled>Run</button>
+    <a href="/results.csv" download>Download results.csv</a>
+  </div>
+
+  <div id="status"></div>
+  <div id="results"></div>
+</main>
+
+<script>
+  const drop = document.getElementById('drop');
+  const fileInput = document.getElementById('image-input');
+  const preview = document.getElementById('preview');
+  const runBtn = document.getElementById('run');
+  const statusEl = document.getElementById('status');
+  const resultsEl = document.getElementById('results');
+
+  let currentFile = null;
+
+  function setFile(file) {
+    if (!file || !file.type.startsWith('image/')) {
+      statusEl.textContent = 'That doesn\'t look like an image.';
+      return;
+    }
+    currentFile = file;
+    preview.src = URL.createObjectURL(file);
+    preview.hidden = false;
+    runBtn.disabled = false;
+    statusEl.textContent = `Loaded: ${file.name}`;
+  }
+
+  drop.addEventListener('click', () => fileInput.click());
+  drop.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files?.[0]) setFile(fileInput.files[0]);
+  });
+
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault();
+    drop.classList.add('drag-over');
+  }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault();
+    drop.classList.remove('drag-over');
+  }));
+  drop.addEventListener('drop', (e) => {
+    const f = e.dataTransfer?.files?.[0];
+    if (f) setFile(f);
+  });
+
+  window.addEventListener('paste', (e) => {
+    const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+    if (item) setFile(item.getAsFile());
+  });
+
+  function field(label, value) {
+    const row = document.createElement('div');
+    row.className = 'field';
+    const k = document.createElement('span');
+    k.className = 'k';
+    k.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'v';
+    v.textContent = value === null || value === undefined || value === '' ? '—' : String(value);
+    row.appendChild(k);
+    row.appendChild(v);
+    return row;
+  }
+
+  function renderCard(r) {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const h = document.createElement('h2');
+    h.textContent = r.approach;
+    card.appendChild(h);
+
+    const timings = document.createElement('div');
+    timings.className = 'timings';
+    const total = document.createElement('span');
+    total.className = 'total';
+    total.textContent = `total ${r.latency_ms} ms`;
+    timings.appendChild(total);
+    if (r.ocr_ms != null) {
+      const ocr = document.createElement('span');
+      ocr.textContent = `ocr ${r.ocr_ms} ms`;
+      timings.appendChild(ocr);
+    }
+    if (r.llm_ms != null) {
+      const llm = document.createElement('span');
+      llm.textContent = `llm ${r.llm_ms} ms`;
+      timings.appendChild(llm);
+    }
+    card.appendChild(timings);
+
+    if (r.error) {
+      const err = document.createElement('div');
+      err.className = 'err';
+      err.textContent = r.error;
+      card.appendChild(err);
+    }
+
+    card.appendChild(field('kind', r.predicted_kind));
+    card.appendChild(field('title', r.predicted_title));
+    card.appendChild(field('amount', r.predicted_amount));
+    card.appendChild(field('date', r.predicted_date));
+    card.appendChild(field('currency', r.predicted_currency));
+
+    if (r.ocr_text) {
+      const det = document.createElement('details');
+      const sum = document.createElement('summary');
+      sum.textContent = 'OCR text';
+      det.appendChild(sum);
+      const pre = document.createElement('pre');
+      pre.textContent = r.ocr_text;
+      det.appendChild(pre);
+      card.appendChild(det);
+    }
+
+    const det2 = document.createElement('details');
+    const sum2 = document.createElement('summary');
+    sum2.textContent = 'Raw LLM output';
+    det2.appendChild(sum2);
+    const pre2 = document.createElement('pre');
+    pre2.textContent = r.raw_output;
+    det2.appendChild(pre2);
+    card.appendChild(det2);
+
+    return card;
+  }
+
+  // Approaches are hardcoded to the single one we run today. Add more later
+  // by appending to this list and the API will pick them up.
+  const APPROACHES = ['ocr+llama3.2:3b'];
+
+  runBtn.addEventListener('click', async () => {
+    if (!currentFile) return;
+    runBtn.disabled = true;
+    resultsEl.replaceChildren();
+    const t0 = performance.now();
+    statusEl.textContent = 'Running… first call after a rebuild downloads OCR models, be patient.';
+
+    const fd = new FormData();
+    fd.append('image', currentFile);
+    APPROACHES.forEach(a => fd.append('approaches', a));
+
+    try {
+      const res = await fetch('/run', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+      statusEl.textContent = `Done in ${elapsed}s. Saved as ${data.image}. Row appended to results.csv.`;
+      data.results.forEach(r => resultsEl.appendChild(renderCard(r)));
+    } catch (err) {
+      statusEl.textContent = '⚠ ' + err.message;
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

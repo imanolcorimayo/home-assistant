@@ -1,6 +1,11 @@
 .env
+**/.env
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
 *.csv
+
+# vision-bench runtime artifacts
+apps/vision-bench/images/
+apps/vision-bench/results.csv

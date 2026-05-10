@@ -1,0 +1,5 @@
+.env
+images/
+results.csv
+__pycache__/
+*.pyc
