@@ -51,6 +51,19 @@ print(extract_transactions('gasto de 25 euros en supermercado'))
 
 ## Architecture
 
+### Data Model Dimensions
+
+The schema is split into 6 dimensions, deliberately uneven. **Rule of thumb: Plata is power, everything else is ergonomics.** Deepen `transactions` / `accounts` / `loans` etc. when it adds real value; keep `events` / `tasks` / `shopping` / `attachments` / `notifications` lean — making them deeper turns the app into Asana, which it shouldn't be.
+
+| Dimension | Tables | Weight |
+|---|---|---|
+| 🏛️ Personas (family) | `family_members` | XS (1) |
+| 💰 Plata (financial) | `transactions`, `accounts`, `monthly_budgets`, `recurring_charges`, `card_statements`, `installment_plans`, `loans` | **XL (7)** |
+| 🗓️ Tiempo (events/tasks) | `events`, `tasks` | S (2) |
+| 🛒 Listas (shopping) | `shopping_items`, `shopping_list_items` | XS (1-2) |
+| 📎 Documentos | `attachments`, `documents` | S (2) |
+| ⚙️ Operacional | `notifications`, `user_preferences` | S (2) |
+
 ### Message Flow
 
 ```

@@ -28,6 +28,19 @@ Bar concreto:
 
 **Fuera de V1:** deudas (#7), ahorro / inversiones (#8), multi-tenant, app mobile, release open-source. Esos son V2+.
 
+## Modelo de datos — dimensiones
+
+El schema tiene 6 dimensiones, deliberadamente desparejas. **Regla:** *Plata es poder, todo lo demás es ergonomía.* Plata se puede profundizar cuando agrega valor real; el resto se mantiene liviano — meterle más capas vuelve la app un Asana, que no es la idea.
+
+| Dimensión | Tablas | Peso | Qué representa |
+|---|---|---|---|
+| 🏛️ Personas | `family_members` | XS (1) | Las 4 personas. Foundation — todo lo demás FK acá. |
+| 💰 Plata | `transactions`, `accounts`, `monthly_budgets`, `recurring_charges`, `card_statements`, `installment_plans`, `loans` | **XL (7)** | El corazón original — el cuadro financiero completo. |
+| 🗓️ Tiempo | `events`, `tasks` | S (2) | Cuándo pasan las cosas y qué hay que hacer. (Fases 9-10.) |
+| 🛒 Listas | `shopping_items`, `shopping_list_items` | XS (1-2) | Cosas para comprar. Dos tablas — probablemente una es legacy. |
+| 📎 Documentos | `attachments`, `documents` | S (2) | Tickets / recibos / facturas. Polimórfico — se "pega" a transactions, tasks, events. |
+| ⚙️ Operacional | `notifications`, `user_preferences` | S (2) | Cómo y cuándo el sistema te habla. Settings. |
+
 ## Servicios
 
 | Servicio | Puerto | Descripción |
