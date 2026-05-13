@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     ollama_model: str = "llama3.1:8b"
     whisper_model: str = "medium"
+    basic_auth_user: str = ""
+    basic_auth_pass: str = ""
 
     model_config = {"env_file": ".env"}
 

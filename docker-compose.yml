@@ -4,7 +4,7 @@ services:
     container_name: sovereignbox_db
     environment:
       POSTGRES_USER: sovereign
-      POSTGRES_PASSWORD: sovereign123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sovereign123}
       POSTGRES_DB: sovereignbox
     ports:
       - "5432:5432"
@@ -70,7 +70,7 @@ services:
       MB_DB_DBNAME: sovereignbox
       MB_DB_PORT: 5432
       MB_DB_USER: sovereign
-      MB_DB_PASS: sovereign123
+      MB_DB_PASS: ${POSTGRES_PASSWORD:-sovereign123}
       MB_DB_HOST: postgres
     depends_on:
       - postgres
@@ -86,13 +86,15 @@ services:
     volumes:
       - media_data:/app/data/files
     environment:
-      DATABASE_URL: postgresql+asyncpg://sovereign:sovereign123@postgres:5432/sovereignbox
+      DATABASE_URL: postgresql+asyncpg://sovereign:${POSTGRES_PASSWORD:-sovereign123}@postgres:5432/sovereignbox
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
       WHISPER_MODEL: ${WHISPER_MODEL:-small}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_PASS: ${BASIC_AUTH_PASS:-}
     depends_on:
       - postgres
       - redis
@@ -115,7 +117,7 @@ services:
     volumes:
       - media_data:/app/data/files
     environment:
-      DATABASE_URL: postgresql+asyncpg://sovereign:sovereign123@postgres:5432/sovereignbox
+      DATABASE_URL: postgresql+asyncpg://sovereign:${POSTGRES_PASSWORD:-sovereign123}@postgres:5432/sovereignbox
       REDIS_URL: redis://redis:6379/0
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
@@ -140,7 +142,7 @@ services:
       - postgres
     environment:
       PGUSER: sovereign
-      PGPASSWORD: sovereign123
+      PGPASSWORD: ${POSTGRES_PASSWORD:-sovereign123}
       PGHOST: postgres
       PGDATABASE: sovereignbox
       RETENTION_DAYS: "30"

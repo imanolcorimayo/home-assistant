@@ -24,7 +24,7 @@ docker compose build api && docker compose up -d api
 # View logs
 docker compose logs api worker -f --tail=50
 
-# DB admin UI — server: db, user: sovereign, pass: sovereign123
+# DB admin UI — server: db, user: sovereign, pass from $POSTGRES_PASSWORD (.env; default `sovereign123` for local dev)
 open http://localhost:8888
 ```
 
@@ -113,6 +113,7 @@ Machine has 7.5GB RAM. Ollama uses 3GB, worker 2GB. Do not add heavy dependencie
 | `app/services/telegram_client.py` | Telegram API wrappers (sync + async) |
 | `app/models/finance.py` | SQLAlchemy ORM: FamilyMember, Transaction, MonthlyBudget |
 | `app/schemas/finance.py` | Pydantic: TelegramUpdate (with callback_query), LLMTransactionOutput |
+| `app/core/auth.py` | HTTP Basic Auth middleware. Active when `BASIC_AUTH_USER`+`BASIC_AUTH_PASS` are set; allowlists `/webhook/*` and `/health`. |
 | `migrations/003_schema_improvements.sql` | All analytics views |
 
 ## Environment
@@ -122,6 +123,8 @@ Required in `.env` (see `.env.example`):
 - `TELEGRAM_WEBHOOK_SECRET`
 - `OLLAMA_MODEL` (default: `qwen2.5:3b`)
 - `WHISPER_MODEL` (default: `small`)
+- `POSTGRES_PASSWORD` (default: `sovereign123` — change before exposing publicly; only applied on first volume init, otherwise `ALTER USER`)
+- `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` (optional; enables HTTP Basic on the dashboard. Empty = disabled)
 
 Webhook must be registered with `allowed_updates: ["message", "callback_query"]`:
 ```bash

@@ -28,7 +28,15 @@ docker compose up --build -d
 docker compose --profile monitoring up --build -d   # opcional: Metabase
 ```
 
-URLs: dashboard http://localhost:8080 · Adminer http://localhost:8888 (server `db`, user/pass `sovereign`/`sovereign123`).
+URLs: dashboard http://localhost:8080 · Adminer http://localhost:8888 (server `db`, user `sovereign`, password = `POSTGRES_PASSWORD` de `.env`).
+
+## Seguridad / exposición pública
+
+El stack está pensado para correr en una LAN o detrás de un túnel privado. Si lo exponés a internet (Cloudflare Tunnel, ngrok, etc.):
+
+- **Cambiá `POSTGRES_PASSWORD`** en `.env` antes del primer `docker compose up`. Si la DB ya está inicializada, además hay que correr `ALTER USER sovereign WITH PASSWORD '...'` dentro de Postgres — el env var sólo se aplica en la primera inicialización del volumen.
+- **Activá Basic Auth** en el dashboard seteando `BASIC_AUTH_USER` y `BASIC_AUTH_PASS` en `.env`. Reiniciar el `api` (`docker compose up -d api`) — `/webhook/*` y `/health` quedan abiertos para que Telegram y los probes sigan funcionando.
+- **Cloudflare Access** (gating a nivel edge, sin pasar por el server) es lo recomendado como capa primaria — se configura en el dashboard de Zero Trust, no en este repo.
 
 ## Migraciones
 

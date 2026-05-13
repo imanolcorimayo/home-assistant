@@ -1,9 +1,17 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.core.auth import BasicAuthMiddleware
+from app.core.config import settings
 from app.routers import attachments, events, finance, lists, tasks, webhook, dashboard
 
 app = FastAPI(title="SovereignBox AI", version="1.0.0")
+
+app.add_middleware(
+    BasicAuthMiddleware,
+    username=settings.basic_auth_user,
+    password=settings.basic_auth_pass,
+)
 
 app.include_router(webhook.router, prefix="/webhook", tags=["webhook"])
 app.include_router(finance.router, prefix="/finance", tags=["finance"])
