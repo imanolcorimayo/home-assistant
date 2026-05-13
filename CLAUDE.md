@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SovereignBox is a private family financial assistant running 100% locally via Docker. A Telegram bot receives text/voice messages, transcribes them with Whisper, extracts financial transactions via a local LLM (qwen2.5:3b via Ollama), and persists them to PostgreSQL. The family is Italian, expenses are in EUR, and messages are in Spanish.
 
+**Product vision and V1 scope:** see the "Visión" section in `README.md`. Telegram = capture + notify; dashboard = see + configure. V1 is "family of 4 uses it daily for 3 months without code changes" — explicitly excludes loans (#7), savings goals (#8), multi-tenant, mobile, open-source.
+
 ## Running the Project
 
 ```bash

@@ -2,6 +2,32 @@
 
 Asistente familiar 100 % local: bot de Telegram + dashboard web + LLM + Whisper, todo en Docker. Stack: FastAPI · Celery · PostgreSQL · Redis · Ollama (qwen2.5:3b) · Whisper. Documentación de uso y arquitectura: `CLAUDE.md`.
 
+## Visión
+
+Asistente familiar always-on que captura gastos + eventos de vida en el momento que ocurren, los devuelve como insight, y reduce a casi cero las decisiones admin del día a día.
+
+**Reparto de canales:**
+
+| | Telegram | Dashboard |
+|---|---|---|
+| Rol | Boca y oídos — captura + notifica | Ojos y manos — ver + configurar |
+| Cuándo | Mientras vivís ("gasté 30 €") | Cuando te sentás a pensar |
+| Fortalezas | Voz, instantáneo, mobile, push | Charts, historial, bulk ops, settings |
+| Lo que vive acá | Inputs · confirmaciones · alertas · recordatorios · undo del último | Dashboards · historial · presupuestos · agenda · ahorros · categorías · parámetros |
+
+Regla: si requiere más de 2 taps en Telegram, va al dashboard. Si es "¿acaba de pasar?", va a Telegram.
+
+### V1 — definición de "listo"
+
+> *La familia (4 personas) usa la app a diario durante 3 meses para gastos, tareas, agenda y compras, sin que el dueño tenga que tocar código.*
+
+Bar concreto:
+- Los 4 registran transacciones, tareas, eventos y compras vía Telegram en <5 s
+- Dashboard muestra balance del mes, agenda, tareas pendientes, lista de compras
+- Página de parámetros (issue #6) · categorías editables (issue #4) · ack "trabajando…" en Telegram (issue #5)
+
+**Fuera de V1:** deudas (#7), ahorro / inversiones (#8), multi-tenant, app mobile, release open-source. Esos son V2+.
+
 ## Servicios
 
 | Servicio | Puerto | Descripción |
