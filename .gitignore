@@ -7,5 +7,5 @@ __pycache__/
 *.csv
 
 # vision-bench runtime artifacts
-apps/vision-bench/images/
-apps/vision-bench/results.csv
+vision-bench/images/
+vision-bench/results.csv
