@@ -28,6 +28,25 @@ Bar concreto:
 
 **Fuera de V1:** deudas (#7), ahorro / inversiones (#8), multi-tenant, app mobile, release open-source. Esos son V2+.
 
+## Arquitectura de IA — 3 agentes, 1 modelo
+
+El sistema se piensa como **3 agentes con roles distintos**, pero **comparten infraestructura** (mismo cliente LLM, misma DB, mismo worker). No son 3 microservicios — son **3 prompts y 3 puntos de entrada** sobre la misma plomería. Esta separación es mental/funcional, no de despliegue.
+
+| Agente | Rol | Entrada → Salida | Estado |
+|---|---|---|---|
+| 🎯 **Orquestador** | Recibe input y lo guarda donde corresponde | Mensaje (texto/voz) → fila en la dimensión correcta | Parcial — hoy sólo extrae gastos. Issue #14 lo extiende a todas las dimensiones. |
+| 💬 **Consultor** | Responde preguntas sobre los datos | Pregunta NL → respuesta humana (apoyada en las vistas SQL) | Falta. **Es el gap más grande.** |
+| 👁️ **Observador** | Mira patrones y notifica proactivamente | Estado de la DB → fila en `notifications` | Falta. Issue #15. |
+
+**Por qué importa esta forma:**
+- Cada agente tiene un prompt chico y enfocado, en vez de un megaprompt que hace de todo.
+- Permite probar modelos distintos por rol (ej: qwen local para el Orquestador, Gemini para el Consultor que necesita generar SQL).
+- Fercho y cualquiera que toque el repo trabaja contra **esta** división de responsabilidades — no contra una arquitectura de servicios.
+
+**Lo que NO es:**
+- No son 3 procesos / contenedores / colas distintas.
+- No es un framework multi-agente con orquestación entre ellos. Cada uno se invoca desde su propio entry point (webhook, dashboard, scheduler).
+
 ## Modelo de datos — dimensiones
 
 El schema tiene 6 dimensiones, deliberadamente desparejas. **Regla:** *Plata es poder, todo lo demás es ergonomía.* Plata se puede profundizar cuando agrega valor real; el resto se mantiene liviano — meterle más capas vuelve la app un Asana, que no es la idea.
