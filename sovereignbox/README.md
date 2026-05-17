@@ -189,6 +189,6 @@ Este repo es un mini-monorepo. Además de SovereignBox (en la raíz), contiene:
 
 | App | Path | Descripción |
 |---|---|---|
-| vision-bench | `apps/vision-bench/` | Extractor de capturas de pago (PaddleOCR + llama3.2:3b) expuesto vía Cloudflare Tunnel |
+| vision-bench | `../vision-bench/` | Extractor de capturas de pago (PaddleOCR + llama3.2:3b) expuesto vía Cloudflare Tunnel |
 
 Cada app tiene su propio `docker-compose.yml` y `.env`, y se levanta de forma independiente desde su directorio.
