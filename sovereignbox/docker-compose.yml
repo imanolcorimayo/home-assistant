@@ -159,7 +159,14 @@ services:
           cpus: "0.3"
 
 volumes:
+  # Volume names pinned to the original project prefix (`home-assistant`)
+  # so this compose file can move into a subfolder without orphaning the
+  # existing data on the prod server.
   postgres_data:
+    name: home-assistant_postgres_data
   ollama_data:
+    name: home-assistant_ollama_data
   media_data:
+    name: home-assistant_media_data
   db_backups:
+    name: home-assistant_db_backups
