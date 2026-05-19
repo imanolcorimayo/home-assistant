@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: household_db
+    environment:
+      POSTGRES_USER: household
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-household123}
+      POSTGRES_DB: household
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Postgres auto-runs any *.sql / *.sh in this dir on first volume init.
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U household -d household"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: household_api
+    ports:
+      - "8081:8080"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://household:${POSTGRES_PASSWORD:-household123}@postgres:5432/household
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:latest
+    container_name: household_adminer
+    ports:
+      - "8889:8080"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: household_postgres_data
