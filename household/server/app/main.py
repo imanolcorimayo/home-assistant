@@ -1,9 +1,15 @@
+import logging
+
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
 from app.database import engine
+from app.routers import whatsapp
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 app = FastAPI(title="household")
+app.include_router(whatsapp.router)
 
 
 @app.get("/health")
