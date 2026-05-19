@@ -9,10 +9,11 @@ import json
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from app.services.whatsapp import send_text
+from app.services.transaction_parser import parse_transaction
+from app.services.whatsapp import download_media, send_text
 
 log = logging.getLogger("whatsapp")
 
@@ -38,10 +39,12 @@ async def verify_webhook(
 
 
 @router.post("/whatsapp")
-async def receive_webhook(request: Request):
+async def receive_webhook(request: Request, background: BackgroundTasks):
     """Incoming message payload from Meta.
 
-    For now: log it and return 200. No DB writes, no LLM.
+    Webhook returns 200 fast; heavy work (Gemini, media download) happens
+    in a background task so the user gets the 'procesando' ack quickly
+    and Meta doesn't retry on slow acks.
     """
     body = await request.json()
     log.info("whatsapp payload: %s", json.dumps(body, ensure_ascii=False))
@@ -49,17 +52,61 @@ async def receive_webhook(request: Request):
     for entry in body.get("entry", []):
         for change in entry.get("changes", []):
             for msg in change.get("value", {}).get("messages", []) or []:
-                if msg.get("type") == "text":
-                    sender = msg["from"]
-                    text_body = msg["text"]["body"]
-                    try:
-                        await send_text(sender, f"echo: {text_body}")
-                    except Exception as exc:
-                        log.exception("echo failed: %s", exc)
+                background.add_task(_handle_message_safe, msg)
     return {"status": "received"}
+
+
+async def _handle_message_safe(msg: dict) -> None:
+    try:
+        await _handle_message(msg)
+    except Exception as exc:
+        log.exception("handle_message failed: %s", exc)
+
+
+async def _handle_message(msg: dict) -> None:
+    sender = msg["from"]
+    msg_type = msg.get("type")
+
+    if msg_type == "text":
+        parsed = await parse_transaction(text=msg["text"]["body"])
+    elif msg_type in ("audio", "image"):
+        # Ack right away — media path takes ~5s; silence feels broken.
+        await send_text(sender, "Procesando...")
+        media_id = msg[msg_type]["id"]
+        bytes_, mime = await download_media(media_id)
+        # Strip codecs suffix Gemini doesn't like: "audio/ogg; codecs=opus" -> "audio/ogg"
+        mime = mime.split(";")[0].strip()
+        caption = msg.get(msg_type, {}).get("caption")
+        parsed = await parse_transaction(text=caption, media_bytes=bytes_, media_mime=mime)
+    else:
+        log.info("ignoring unsupported message type: %s", msg_type)
+        return
+
+    await send_text(sender, _format_parsed(parsed))
+
+
+def _format_parsed(parsed: dict | None) -> str:
+    if not parsed:
+        return "no pude procesar el mensaje (gemini no respondió)"
+    if not parsed.get("kind"):
+        return f"no parece una transacción (confidence={parsed.get('confidence')})"
+    return (
+        f"{parsed['kind']} - ${parsed.get('amount')}\n"
+        f"{parsed.get('description') or '(sin descripcion)'}\n"
+        f"fecha: {parsed.get('transaction_date') or '(hoy)'}\n"
+        f"cuenta: {parsed.get('account_hint') or '(?)'}\n"
+        f"confianza: {parsed.get('confidence')}"
+    )
 
 
 @router.post("/debug/send")
 async def debug_send(to: str, body: str):
     """Curl helper: POST /webhook/debug/send?to=549...&body=hi"""
     return await send_text(to, body)
+
+
+@router.post("/debug/parse")
+async def debug_parse(text: str):
+    """Curl helper: POST /webhook/debug/parse?text=gasté%201500%20en%20supermercado"""
+    parsed = await parse_transaction(text=text)
+    return {"parsed": parsed}
