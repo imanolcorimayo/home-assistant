@@ -43,7 +43,10 @@ SCHEMA = {
         "account_hint": {"type": "string", "nullable": True},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
     },
-    "required": ["confidence"],
+    # `required` here means the model must EMIT the key — `nullable: True`
+    # still lets it set the value to null. We force amount + description so
+    # Gemini never silently drops them (observed behavior with this model).
+    "required": ["kind", "amount", "description", "confidence"],
 }
 
 

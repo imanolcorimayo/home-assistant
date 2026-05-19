@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from app.services.transaction_parser import parse_transaction
+from app.services.transactions import save_parsed
 from app.services.whatsapp import download_media, send_text
 
 log = logging.getLogger("whatsapp")
@@ -82,20 +83,25 @@ async def _handle_message(msg: dict) -> None:
         log.info("ignoring unsupported message type: %s", msg_type)
         return
 
-    await send_text(sender, _format_parsed(parsed))
+    tx_id = None
+    if parsed:
+        tx_id = await save_parsed(parsed, sender_wa_id=sender)
+    await send_text(sender, _format_parsed(parsed, tx_id))
 
 
-def _format_parsed(parsed: dict | None) -> str:
+def _format_parsed(parsed: dict | None, tx_id: str | None = None) -> str:
     if not parsed:
         return "no pude procesar el mensaje (gemini no respondió)"
     if not parsed.get("kind"):
         return f"no parece una transacción (confidence={parsed.get('confidence')})"
+    saved_line = f"guardado #{tx_id[:8]}" if tx_id else "no guardado (confianza baja)"
     return (
         f"{parsed['kind']} - ${parsed.get('amount')}\n"
         f"{parsed.get('description') or '(sin descripcion)'}\n"
         f"fecha: {parsed.get('transaction_date') or '(hoy)'}\n"
         f"cuenta: {parsed.get('account_hint') or '(?)'}\n"
-        f"confianza: {parsed.get('confidence')}"
+        f"confianza: {parsed.get('confidence')}\n"
+        f"{saved_line}"
     )
 
 
@@ -110,3 +116,14 @@ async def debug_parse(text: str):
     """Curl helper: POST /webhook/debug/parse?text=gasté%201500%20en%20supermercado"""
     parsed = await parse_transaction(text=text)
     return {"parsed": parsed}
+
+
+@router.post("/debug/parse_and_save")
+async def debug_parse_and_save(text: str):
+    """Curl helper: parses AND inserts. Lets us test DB writes without WhatsApp.
+
+    POST /webhook/debug/parse_and_save?text=gasté%201500%20en%20supermercado
+    """
+    parsed = await parse_transaction(text=text)
+    tx_id = await save_parsed(parsed, sender_wa_id="debug") if parsed else None
+    return {"parsed": parsed, "transaction_id": tx_id}
