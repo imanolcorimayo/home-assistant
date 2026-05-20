@@ -96,8 +96,9 @@ def _format_parsed(parsed: dict | None, tx_id: str | None = None) -> str:
         return f"no parece una transacción (confidence={parsed.get('confidence')})"
     saved_line = f"guardado #{tx_id[:8]}" if tx_id else "no guardado (confianza baja)"
     return (
-        f"{parsed['kind']} - ${parsed.get('amount')}\n"
+        f"{parsed['kind']} - {parsed.get('amount')}\n"
         f"{parsed.get('description') or '(sin descripcion)'}\n"
+        f"categoría: {parsed.get('category') or '(sin categoría)'}\n"
         f"fecha: {parsed.get('transaction_date') or '(hoy)'}\n"
         f"cuenta: {parsed.get('account_hint') or '(?)'}\n"
         f"confianza: {parsed.get('confidence')}\n"

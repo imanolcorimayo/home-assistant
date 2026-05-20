@@ -34,8 +34,9 @@ def _format_reply(parsed: dict | None, tx_id: str | None) -> str:
         return f"no parece una transacción (confianza={parsed.get('confidence')})"
     saved = f"guardado #{tx_id[:8]}" if tx_id else "no guardado (confianza baja)"
     lines = [
-        f"{parsed['kind']} - ${parsed.get('amount')}",
+        f"{parsed['kind']} - {parsed.get('amount')}",
         parsed.get("description") or "(sin descripcion)",
+        f"categoría: {parsed.get('category') or '(sin categoría)'}",
         f"fecha: {parsed.get('transaction_date') or '(hoy)'}",
         f"cuenta: {parsed.get('account_hint') or '(?)'}",
         f"confianza: {parsed.get('confidence')}",

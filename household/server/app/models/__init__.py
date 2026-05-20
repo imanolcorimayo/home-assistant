@@ -1,6 +1,7 @@
 from app.models.finance import (
     Account,
     AccountKind,
+    Category,
     FamilyMember,
     MonthlyBudget,
     RecurringCharge,
@@ -12,6 +13,7 @@ from app.models.finance import (
 __all__ = [
     "Account",
     "AccountKind",
+    "Category",
     "FamilyMember",
     "MonthlyBudget",
     "RecurringCharge",

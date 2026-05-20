@@ -10,12 +10,13 @@ from datetime import date as date_cls
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models import (
     Account,
+    Category,
     FamilyMember,
     Transaction,
     TransactionKind,
@@ -29,9 +30,35 @@ log = logging.getLogger("transactions")
 # for filtering ("show me low-confidence rows") without false precision.
 CONFIDENCE_MAP = {"high": Decimal("0.9"), "medium": Decimal("0.6"), "low": Decimal("0.3")}
 
-# Placeholder until the parser extracts a category. The schema requires
-# category NOT NULL, so we land everything here and fix it in a follow-up.
-DEFAULT_CATEGORY = "sin_categoria"
+# Where uncategorized rows land. Must match a seeded row in the category table.
+DEFAULT_CATEGORY = "Sin categoría"
+
+
+async def active_category_names() -> list[str]:
+    """Names the parser offers Gemini to choose from. Excludes the
+    'Sin categoría' fallback — that's reserved for 'none of these apply'."""
+    async with AsyncSessionLocal() as session:
+        rows = await session.scalars(
+            select(Category.name)
+            .where(Category.is_active, Category.name != DEFAULT_CATEGORY)
+            .order_by(Category.name)
+        )
+        return list(rows)
+
+
+async def _resolve_category(session: AsyncSession, name: Optional[str]) -> tuple[str, Optional[object]]:
+    """Map a (possibly fuzzy) category name to (canonical_name, category_id).
+    Falls back to DEFAULT_CATEGORY when the name is missing/unknown."""
+    if name:
+        cat = await session.scalar(
+            select(Category).where(
+                func.lower(Category.name) == name.strip().lower(), Category.is_active
+            )
+        )
+        if cat:
+            return cat.name, cat.category_id
+    cat = await session.scalar(select(Category).where(Category.name == DEFAULT_CATEGORY))
+    return (cat.name, cat.category_id) if cat else (DEFAULT_CATEGORY, None)
 
 
 def _parse_amount(raw) -> Optional[Decimal]:
@@ -53,14 +80,23 @@ def _parse_date(raw) -> Optional[date_cls]:
         return None
 
 
-async def _pick_default_ids(session: AsyncSession) -> Optional[tuple]:
-    member_id = await session.scalar(select(FamilyMember.family_member_id).limit(1))
-    account_id = await session.scalar(select(Account.account_id).limit(1))
-    if member_id is None or account_id is None:
+async def _pick_defaults(session: AsyncSession) -> Optional[tuple]:
+    # MVP: no per-sender routing yet, so fall back to the oldest active
+    # account/member. Deterministic (LIMIT 1 with no ORDER BY is arbitrary).
+    member_id = await session.scalar(
+        select(FamilyMember.family_member_id)
+        .where(FamilyMember.is_active)
+        .order_by(FamilyMember.created_ts)
+        .limit(1)
+    )
+    account = await session.scalar(
+        select(Account).where(Account.is_active).order_by(Account.created_ts).limit(1)
+    )
+    if member_id is None or account is None:
         log.error("cannot save transaction: missing seed (family_member=%s account=%s)",
-                  member_id, account_id)
+                  member_id, account)
         return None
-    return member_id, account_id
+    return member_id, account
 
 
 async def save_parsed(parsed: dict, sender_wa_id: str) -> Optional[str]:
@@ -86,20 +122,22 @@ async def save_parsed(parsed: dict, sender_wa_id: str) -> Optional[str]:
         return None
 
     async with AsyncSessionLocal() as session:
-        defaults = await _pick_default_ids(session)
+        defaults = await _pick_defaults(session)
         if defaults is None:
             return None
-        member_id, account_id = defaults
+        member_id, account = defaults
 
         tx_date = _parse_date(parsed.get("transaction_date")) or date_cls.today()
+        category_name, category_id = await _resolve_category(session, parsed.get("category"))
 
         tx = Transaction(
-            account_id=account_id,
+            account_id=account.account_id,
             family_member_id=member_id,
             kind=TransactionKind(kind_raw),
             amount=amount,
-            currency="ARS",
-            category=DEFAULT_CATEGORY,
+            currency=account.currency,
+            category=category_name,
+            category_id=category_id,
             description=parsed.get("description"),
             transaction_date=tx_date,
             value_date=tx_date,

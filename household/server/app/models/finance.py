@@ -135,6 +135,19 @@ class MonthlyBudget(Base):
     updated_ts: Mapped[Optional[datetime]] = mapped_column(nullable=True)
 
 
+class Category(Base):
+    __tablename__ = "category"
+
+    category_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    grupo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # variable | fijo | ingreso
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_ts: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_ts: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
 class Transaction(Base):
     __tablename__ = "transaction"
     __table_args__ = (
@@ -164,6 +177,9 @@ class Transaction(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default="EUR")
     category: Mapped[str] = mapped_column(Text, nullable=False)
+    category_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("category.category_id"), nullable=True
+    )
     subcategory_1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     subcategory_2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
