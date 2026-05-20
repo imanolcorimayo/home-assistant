@@ -8,15 +8,10 @@ http://household_mcp:8000/mcp on the docker network. Never tunneled.
 """
 
 import logging
-from datetime import date as date_cls
-from datetime import timedelta
 
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import or_, select
 
-from app.database import AsyncSessionLocal
-from app.models import Transaction, TransactionKind
-from app.services.transactions import create_transaction
+from app.services.transactions import create_transaction, recent_expenses
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("mcp_server")
@@ -35,28 +30,7 @@ async def look_up_expenses(term: str | None = None, days: int = 90, limit: int =
     days: ventana hacia atrás en días (por defecto 90).
     limit: máximo de filas (máx 50).
     """
-    since = date_cls.today() - timedelta(days=max(days, 1))
-    async with AsyncSessionLocal() as s:
-        q = select(Transaction).where(
-            Transaction.deleted_ts.is_(None),
-            Transaction.kind == TransactionKind.expense,
-            Transaction.transaction_date >= since,
-        )
-        if term:
-            like = f"%{term.strip()}%"
-            q = q.where(or_(Transaction.description.ilike(like), Transaction.category.ilike(like)))
-        q = q.order_by(Transaction.transaction_date.desc()).limit(min(max(limit, 1), 50))
-        rows = (await s.scalars(q)).all()
-        return [
-            {
-                "date": str(t.transaction_date),
-                "amount": float(t.amount),
-                "currency": t.currency,
-                "category": t.category,
-                "description": t.description,
-            }
-            for t in rows
-        ]
+    return await recent_expenses(limit=limit, days=days, term=term)
 
 
 @mcp.tool()

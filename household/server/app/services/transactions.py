@@ -7,10 +7,11 @@ a wa_id column on family_member or a fuzzy match on account.name.
 
 import logging
 from datetime import date as date_cls
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -44,6 +45,39 @@ async def active_category_names() -> list[str]:
             .order_by(Category.name)
         )
         return list(rows)
+
+
+async def recent_expenses(
+    limit: int = 20, days: int = 90, term: Optional[str] = None
+) -> list[dict]:
+    """Recent (non-deleted) expenses, newest first.
+
+    Backs two callers: the agent pre-feeds this into its prompt so it can judge
+    duplicates and categories without a tool round-trip, and the MCP
+    look_up_expenses tool reuses it as a fallback (with a search term).
+    """
+    since = date_cls.today() - timedelta(days=max(days, 1))
+    async with AsyncSessionLocal() as session:
+        q = select(Transaction).where(
+            Transaction.deleted_ts.is_(None),
+            Transaction.kind == TransactionKind.expense,
+            Transaction.transaction_date >= since,
+        )
+        if term:
+            like = f"%{term.strip()}%"
+            q = q.where(or_(Transaction.description.ilike(like), Transaction.category.ilike(like)))
+        q = q.order_by(Transaction.transaction_date.desc()).limit(min(max(limit, 1), 50))
+        rows = (await session.scalars(q)).all()
+        return [
+            {
+                "date": str(t.transaction_date),
+                "amount": float(t.amount),
+                "currency": t.currency,
+                "category": t.category,
+                "description": t.description,
+            }
+            for t in rows
+        ]
 
 
 async def _resolve_category(session: AsyncSession, name: Optional[str]) -> tuple[str, Optional[object]]:
