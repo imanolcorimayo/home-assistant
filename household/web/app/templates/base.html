@@ -1,25 +1,64 @@
 <!doctype html>
 <html lang="es">
+{% from "macros.html" import icon %}
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}Household{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ static_ver }}" />
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand">Household</div>
-    <nav>
-      <a href="/">Resumen</a>
-      <a href="/transactions">Movimientos</a>
-      <a href="/categories">Categorías</a>
-    </nav>
-  </header>
+{# Nav items shared by the desktop sidebar and the mobile bottom bar. #}
+{% set nav = [
+  ("/",             "Resumen",      "home"),
+  ("/transactions", "Movimientos",  "receipt"),
+  ("/categories",   "Categorías",   "tag"),
+  ("/budgets",      "Presupuestos", "wallet"),
+  ("/settings",     "Ajustes",      "settings"),
+] %}
+{% set path = request.url.path %}
+<body class="min-h-screen bg-bg text-ink font-sans antialiased">
+  <div class="flex min-h-screen">
 
-  <main class="content">
-    {% block content %}{% endblock %}
-  </main>
+    {# Desktop sidebar — hidden on mobile. #}
+    <aside class="hidden md:flex md:flex-col w-60 shrink-0 bg-ink text-white">
+      <div class="px-5 h-14 flex items-center font-bold tracking-wide border-b border-white/10">
+        Household
+      </div>
+      <nav class="flex-1 p-3 space-y-1">
+        {% for href, label, ic in nav %}
+          <a href="{{ href }}"
+             class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
+                    {% if path == href %}bg-white/15 text-white{% else %}text-slate-300 hover:bg-white/10 hover:text-white{% endif %}">
+            {{ icon(ic, "w-[18px] h-[18px]") }}{{ label }}
+          </a>
+        {% endfor %}
+      </nav>
+    </aside>
 
-  <script src="/static/app.js"></script>
+    <div class="flex-1 flex flex-col min-w-0">
+      {# Slim topbar — title on mobile, page actions injected per page. #}
+      <header class="sticky top-0 z-10 flex items-center px-4 md:px-8 h-14 bg-surface/90 backdrop-blur border-b border-line">
+        <div class="font-semibold md:hidden">Household</div>
+      </header>
+
+      {# Centered, width-capped content. Bottom pad clears the mobile bar. #}
+      <main class="flex-1 w-full max-w-5xl mx-auto px-4 md:px-8 py-6 pb-24 md:pb-8">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  {# Mobile bottom bar — hidden on desktop. #}
+  <nav class="md:hidden fixed bottom-0 inset-x-0 bg-ink text-white grid grid-cols-5 border-t border-white/10">
+    {% for href, label, ic in nav %}
+      <a href="{{ href }}"
+         class="flex flex-col items-center gap-0.5 py-2 text-[10px]
+                {% if path == href %}text-white{% else %}text-slate-400{% endif %}">
+        {{ icon(ic, "w-5 h-5") }}{{ label }}
+      </a>
+    {% endfor %}
+  </nav>
+
+  <script src="/static/app.js?v={{ static_ver }}"></script>
 </body>
 </html>

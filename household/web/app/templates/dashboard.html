@@ -1,23 +1,61 @@
 {% extends "base.html" %}
+{% from "macros.html" import page_header %}
 {% block title %}Resumen — Household{% endblock %}
 {% block content %}
-  <h1>Resumen mensual</h1>
-  <p class="muted">Ingresos y gastos de los últimos 12 meses.</p>
-
-  <table>
-    <thead>
-      <tr><th>Mes</th><th>Tipo</th><th class="num">Total</th></tr>
-    </thead>
-    <tbody>
-      {% for r in rows %}
-        <tr>
-          <td>{{ r.month }}</td>
-          <td>{{ "Ingreso" if r.kind == "income" else "Gasto" }}</td>
-          <td class="num">{{ "%.2f"|format(r.total) }}</td>
-        </tr>
-      {% else %}
-        <tr><td colspan="3" class="muted">Sin datos todavía.</td></tr>
+  {% call page_header("Resumen") %}
+    {# Segmented period control — replaces the old header dropdown. #}
+    <div class="inline-flex rounded-lg border border-line bg-surface p-0.5 text-sm">
+      {% for key, (label, _) in periods.items() %}
+        <a href="?period={{ key }}"
+           class="px-3 py-1.5 rounded-md transition-colors
+                  {% if period == key %}bg-ink text-white{% else %}text-muted hover:text-ink{% endif %}">
+          {{ label }}
+        </a>
       {% endfor %}
-    </tbody>
-  </table>
+    </div>
+  {% endcall %}
+
+  {# KPI cards. #}
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+    <div class="bg-surface border border-line rounded-xl p-5">
+      <div class="text-xs uppercase tracking-wide text-muted">Ingresos</div>
+      <div class="text-2xl font-semibold text-income num mt-1">{{ "%.2f"|format(kpi.income) }}</div>
+    </div>
+    <div class="bg-surface border border-line rounded-xl p-5">
+      <div class="text-xs uppercase tracking-wide text-muted">Gastos</div>
+      <div class="text-2xl font-semibold text-expense num mt-1">{{ "%.2f"|format(kpi.expense) }}</div>
+    </div>
+    <div class="bg-surface border border-line rounded-xl p-5">
+      <div class="text-xs uppercase tracking-wide text-muted">Neto</div>
+      <div class="text-2xl font-semibold num mt-1 {{ 'text-income' if net >= 0 else 'text-expense' }}">
+        {{ "%.2f"|format(net) }}
+      </div>
+    </div>
+  </div>
+
+  <h2 class="text-sm font-semibold text-muted uppercase tracking-wide mb-3">Últimos 12 meses</h2>
+  <div class="bg-surface border border-line rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="text-xs uppercase tracking-wide text-muted bg-bg">
+        <tr>
+          <th class="text-left px-5 py-2.5">Mes</th>
+          <th class="text-left px-5 py-2.5">Tipo</th>
+          <th class="px-5 py-2.5 num">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr class="border-t border-line">
+            <td class="px-5 py-2.5">{{ r.month }}</td>
+            <td class="px-5 py-2.5 {{ 'text-income' if r.kind == 'income' else 'text-expense' }}">
+              {{ "Ingreso" if r.kind == "income" else "Gasto" }}
+            </td>
+            <td class="px-5 py-2.5 num">{{ "%.2f"|format(r.total) }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="3" class="px-5 py-4 text-muted">Sin datos todavía.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 {% endblock %}
