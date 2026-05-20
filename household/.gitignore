@@ -1,0 +1,3 @@
+# Local-only data: real DB dumps from prod, never commit
+.local/
+*_dump.sql
