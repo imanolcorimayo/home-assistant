@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api", tags=["agent"])
 
 class AgentRequest(BaseModel):
     text: str
+    session_id: str | None = None
 
 
 class AgentResponse(BaseModel):
@@ -30,7 +31,7 @@ async def agent_endpoint(req: AgentRequest) -> AgentResponse:
     if not text:
         return AgentResponse(reply="mensaje vacío")
     try:
-        reply = await run_agent(text)
+        reply = await run_agent(text, session_id=req.session_id)
     except Exception as exc:
         log.exception("agent failed: %s", exc)
         reply = f"error del agente: {exc}"

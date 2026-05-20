@@ -4,6 +4,19 @@
 const ENDPOINT = "/api/agent";
 const MEDIA_ENDPOINT = "/api/media";
 
+// Stable per-device id so the agent can keep conversation context across
+// messages (e.g. "sí, guardalo igual" after a duplicate flag).
+const SESSION_ID = (() => {
+  let id = localStorage.getItem("household_session_id");
+  if (!id) {
+    id =
+      (crypto.randomUUID && crypto.randomUUID()) ||
+      Date.now().toString(36) + Math.random().toString(16).slice(2);
+    localStorage.setItem("household_session_id", id);
+  }
+  return id;
+})();
+
 const $messages = document.getElementById("messages");
 const $form = document.getElementById("composer");
 const $input = document.getElementById("input");
@@ -29,7 +42,7 @@ async function send(text) {
     const r = await fetch(ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, session_id: SESSION_ID }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
