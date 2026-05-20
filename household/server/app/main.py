@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.database import engine
-from app.routers import chat, whatsapp
+from app.routers import agent, chat, whatsapp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -24,6 +24,7 @@ async def no_store(request, call_next):
 
 app.include_router(whatsapp.router)
 app.include_router(chat.router)
+app.include_router(agent.router)
 
 
 @app.get("/health")

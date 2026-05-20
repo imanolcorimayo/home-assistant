@@ -11,6 +11,7 @@
 {% set nav = [
   ("/",             "Resumen",      "home"),
   ("/transactions", "Movimientos",  "receipt"),
+  ("/analytics",    "Análisis",     "chart"),
   ("/categories",   "Categorías",   "tag"),
   ("/budgets",      "Presupuestos", "wallet"),
   ("/settings",     "Ajustes",      "settings"),
@@ -49,7 +50,7 @@
   </div>
 
   {# Mobile bottom bar — hidden on desktop. #}
-  <nav class="md:hidden fixed bottom-0 inset-x-0 bg-ink text-white grid grid-cols-5 border-t border-white/10">
+  <nav class="md:hidden fixed bottom-0 inset-x-0 bg-ink text-white grid grid-cols-6 border-t border-white/10">
     {% for href, label, ic in nav %}
       <a href="{{ href }}"
          class="flex flex-col items-center gap-0.5 py-2 text-[10px]
@@ -60,5 +61,6 @@
   </nav>
 
   <script src="/static/app.js?v={{ static_ver }}"></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

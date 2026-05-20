@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header %}
+{% block title %}Análisis — Household{% endblock %}
+{% block content %}
+  {{ page_header("Análisis", "Comparativas, tendencias y tasa de ahorro") }}
+
+  {# 1. Comparativa anual #}
+  <div class="bg-surface border border-line rounded-xl p-5 mb-6">
+    <div class="text-sm font-semibold mb-1">Comparativa anual</div>
+    <p class="text-xs text-muted mb-4">Ingresos y gastos mes a mes — año actual vs anterior</p>
+    <div class="relative h-72"><canvas id="comparativaChart"></canvas></div>
+  </div>
+
+  {# 2. Tendencia mensual #}
+  <div class="bg-surface border border-line rounded-xl p-5 mb-6">
+    <div class="text-sm font-semibold mb-1">Tendencia mensual</div>
+    <p class="text-xs text-muted mb-4">Últimos 12 meses · top 5 categorías de gasto</p>
+    <div class="relative h-72"><canvas id="trendChart"></canvas></div>
+  </div>
+
+  {# 3. Tasa de ahorro #}
+  <div class="bg-surface border border-line rounded-xl p-5 mb-6">
+    <div class="text-sm font-semibold mb-1">Tasa de ahorro</div>
+    <p class="text-xs text-muted mb-4">% del ingreso ahorrado mes a mes — últimos 12 meses</p>
+    <div class="relative h-64"><canvas id="savingsChart"></canvas></div>
+  </div>
+
+  {# 4. Gasto por categoría — ranked CSS bars, this month #}
+  <div class="bg-surface border border-line rounded-xl p-5">
+    <div class="text-sm font-semibold mb-1">Gasto por categoría</div>
+    <p class="text-xs text-muted mb-4">Mes actual, ranking</p>
+    {% if by_cat %}
+      {% set top_total = by_cat[0].total %}
+      <div class="space-y-3">
+        {% for g in by_cat %}
+          <div>
+            <div class="flex justify-between text-sm mb-1">
+              <span>{{ g.category }}</span>
+              <span class="num text-muted">{{ "%.2f"|format(g.total) }}</span>
+            </div>
+            <div class="h-2 rounded-full bg-bg overflow-hidden">
+              <div class="h-full rounded-full"
+                   style="width: {{ (g.total / top_total * 100) if top_total else 0 }}%; background: #d4b478;"></div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-sm text-muted">Sin gastos este mes.</div>
+    {% endif %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vendor/chart.umd.js?v={{ static_ver }}"></script>
+<script>
+  const DATA = {{ data | tojson }};
+
+  // "Italian palace" palette carried over from sovereignbox.
+  const PALETTE = ['#d4b478','#c26648','#9bbb6e','#7eb5cc','#dca84a','#b8b2a4','#e8b85c','#9c7d57'];
+  const INCOME = '#15803d', EXPENSE = '#b91c1c';
+  const MONTHS_ES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+  // 'YYYY-MM' -> 'May' (short month label for the trailing-12 axis).
+  const shortLabel = (ym) => MONTHS_ES[parseInt(ym.slice(5, 7), 10) - 1];
+
+  Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = '#6b7280';
+  Chart.defaults.animation = false;
+
+  const grid = { color: '#e5e7eb' };
+  const legendBottom = { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } };
+
+  // 1. Comparativa anual — grouped bars, current vs previous year.
+  const cy = String(DATA.cur_year), py = String(DATA.cur_year - 1);
+  new Chart(document.getElementById('comparativaChart'), {
+    type: 'bar',
+    data: {
+      labels: MONTHS_ES,
+      datasets: [
+        { label: 'Ingresos ' + cy, data: DATA.comparativa[cy].income,  backgroundColor: INCOME },
+        { label: 'Gastos '   + cy, data: DATA.comparativa[cy].expense, backgroundColor: EXPENSE },
+        { label: 'Ingresos ' + py, data: DATA.comparativa[py].income,  backgroundColor: INCOME + '55' },
+        { label: 'Gastos '   + py, data: DATA.comparativa[py].expense, backgroundColor: EXPENSE + '55' },
+      ],
+    },
+    options: { maintainAspectRatio: false, plugins: { legend: legendBottom },
+               scales: { x: { grid: { display: false } }, y: { grid } } },
+  });
+
+  // 2. Tendencia mensual — one line per top-5 expense category.
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: DATA.months.map(shortLabel),
+      datasets: DATA.trend.cats.map((cat, i) => ({
+        label: cat,
+        data: DATA.trend.series[cat],
+        borderColor: PALETTE[i % PALETTE.length],
+        backgroundColor: PALETTE[i % PALETTE.length],
+        tension: 0.3, borderWidth: 2, pointRadius: 2,
+      })),
+    },
+    options: { maintainAspectRatio: false, plugins: { legend: legendBottom },
+               scales: { x: { grid: { display: false } }, y: { grid, beginAtZero: true } } },
+  });
+
+  // 3. Tasa de ahorro — single % line.
+  new Chart(document.getElementById('savingsChart'), {
+    type: 'line',
+    data: {
+      labels: DATA.months.map(shortLabel),
+      datasets: [{
+        label: '% ahorrado', data: DATA.savings,
+        borderColor: '#0f172a', backgroundColor: 'rgba(15,23,42,0.08)',
+        fill: true, tension: 0.3, borderWidth: 2, pointRadius: 2,
+      }],
+    },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false } },
+               scales: { x: { grid: { display: false } },
+                         y: { grid, ticks: { callback: (v) => v + '%' } } } },
+  });
+</script>
+{% endblock %}

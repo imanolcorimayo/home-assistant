@@ -7,6 +7,7 @@ asyncpg uses $1, $2... placeholders (never string-format SQL values).
 
 import math
 import os
+from datetime import date
 
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import RedirectResponse
@@ -144,6 +145,120 @@ async def create_category(name: str = Form(...), grupo: str = Form("")):
         grupo.strip(),
     )
     return RedirectResponse("/categories", status_code=303)
+
+
+def _last_12_months() -> list[str]:
+    """['YYYY-MM', …] for the trailing 12 months, oldest first — the shared
+    x-axis for the trend and savings-rate charts, so months with no rows
+    still show as zero instead of disappearing."""
+    today = date.today()
+    out = []
+    for i in range(11, -1, -1):
+        mm, yy = today.month - i, today.year
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        out.append(f"{yy:04d}-{mm:02d}")
+    return out
+
+
+@router.get("/analytics")
+async def analytics(request: Request):
+    months = _last_12_months()
+    midx = {m: i for i, m in enumerate(months)}
+    cur_year = date.today().year
+
+    # 1. Comparativa anual — income & expense per month, this year vs last.
+    comp = await db.fetch(
+        """
+        SELECT extract(year  FROM transaction_date)::int  AS yr,
+               extract(month FROM transaction_date)::int  AS mo,
+               kind, sum(amount) AS total
+        FROM transaction
+        WHERE deleted_ts IS NULL
+          AND transaction_date >= date_trunc('year', current_date) - interval '1 year'
+        GROUP BY 1, 2, 3
+        """
+    )
+    comparativa = {
+        cur_year:     {"income": [0.0] * 12, "expense": [0.0] * 12},
+        cur_year - 1: {"income": [0.0] * 12, "expense": [0.0] * 12},
+    }
+    for r in comp:
+        if r["yr"] in comparativa:
+            comparativa[r["yr"]][r["kind"]][r["mo"] - 1] = float(r["total"])
+
+    # 2. Tendencia — last 12 months, the top-5 expense categories as lines.
+    top = await db.fetch(
+        """
+        SELECT category, sum(amount) AS total
+        FROM transaction
+        WHERE deleted_ts IS NULL AND kind = 'expense'
+          AND transaction_date >= date_trunc('month', current_date) - interval '11 months'
+        GROUP BY category ORDER BY total DESC LIMIT 5
+        """
+    )
+    top_cats = [r["category"] for r in top]
+    trend = {c: [0.0] * 12 for c in top_cats}
+    if top_cats:
+        tser = await db.fetch(
+            """
+            SELECT to_char(date_trunc('month', transaction_date), 'YYYY-MM') AS month,
+                   category, sum(amount) AS total
+            FROM transaction
+            WHERE deleted_ts IS NULL AND kind = 'expense'
+              AND category = ANY($1)
+              AND transaction_date >= date_trunc('month', current_date) - interval '11 months'
+            GROUP BY 1, 2
+            """,
+            top_cats,
+        )
+        for r in tser:
+            if r["month"] in midx:
+                trend[r["category"]][midx[r["month"]]] = float(r["total"])
+
+    # 3. Tasa de ahorro — (income - expense) / income, per month.
+    bal = await db.fetch(
+        """
+        SELECT to_char(date_trunc('month', transaction_date), 'YYYY-MM') AS month,
+               coalesce(sum(amount) FILTER (WHERE kind = 'income'),  0) AS income,
+               coalesce(sum(amount) FILTER (WHERE kind = 'expense'), 0) AS expense
+        FROM transaction
+        WHERE deleted_ts IS NULL
+          AND transaction_date >= date_trunc('month', current_date) - interval '11 months'
+        GROUP BY 1
+        """
+    )
+    savings = [0.0] * 12
+    for r in bal:
+        if r["month"] in midx and r["income"] > 0:
+            savings[midx[r["month"]]] = round(
+                float(r["income"] - r["expense"]) / float(r["income"]) * 100, 1
+            )
+
+    # 4. Gasto por categoría — current month, ranked.
+    by_cat = await db.fetch(
+        """
+        SELECT category, sum(amount) AS total
+        FROM transaction
+        WHERE deleted_ts IS NULL AND kind = 'expense'
+          AND date_trunc('month', transaction_date) = date_trunc('month', current_date)
+        GROUP BY category ORDER BY total DESC
+        """
+    )
+
+    data = {
+        "months": months,
+        "comparativa": {str(y): v for y, v in comparativa.items()},
+        "cur_year": cur_year,
+        "trend": {"cats": top_cats, "series": trend},
+        "savings": savings,
+    }
+    by_cat_rows = [{"category": r["category"], "total": float(r["total"])} for r in by_cat]
+    return templates.TemplateResponse(
+        "analytics.html",
+        {"request": request, "data": data, "by_cat": by_cat_rows},
+    )
 
 
 @router.get("/budgets")

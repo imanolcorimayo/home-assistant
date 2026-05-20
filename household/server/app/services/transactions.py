@@ -156,3 +156,63 @@ async def save_parsed(parsed: dict, sender_wa_id: str) -> Optional[str]:
         log.info("saved transaction id=%s kind=%s amount=%s desc=%r",
                  tx.transaction_id, kind_raw, amount, parsed.get("description"))
         return str(tx.transaction_id)
+
+
+async def create_transaction(
+    kind: str,
+    amount,
+    description: Optional[str] = None,
+    category: Optional[str] = None,
+    transaction_date: Optional[str] = None,
+    source: str = "manual",
+) -> Optional[str]:
+    """Insert one transaction from explicit fields (used by the MCP add_transaction tool).
+
+    Unlike save_parsed there's no confidence gating — the caller already
+    decided to write. Account/member default to the oldest active; currency
+    comes from the account; category resolves to category_id (or fallback).
+    Returns the new transaction_id, or None on validation/DB failure.
+    """
+    if kind not in ("expense", "income"):
+        log.info("create_transaction: bad kind=%r", kind)
+        return None
+    amt = _parse_amount(amount)
+    if amt is None:
+        log.info("create_transaction: bad amount=%r", amount)
+        return None
+    try:
+        src = TransactionSource(source)
+    except ValueError:
+        src = TransactionSource.manual
+
+    async with AsyncSessionLocal() as session:
+        defaults = await _pick_defaults(session)
+        if defaults is None:
+            return None
+        member_id, account = defaults
+        tx_date = _parse_date(transaction_date) or date_cls.today()
+        category_name, category_id = await _resolve_category(session, category)
+
+        tx = Transaction(
+            account_id=account.account_id,
+            family_member_id=member_id,
+            kind=TransactionKind(kind),
+            amount=amt,
+            currency=account.currency,
+            category=category_name,
+            category_id=category_id,
+            description=description,
+            transaction_date=tx_date,
+            value_date=tx_date,
+            source=src,
+        )
+        session.add(tx)
+        try:
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            log.exception("create_transaction insert failed: %s", exc)
+            return None
+
+        log.info("created transaction id=%s kind=%s amount=%s", tx.transaction_id, kind, amt)
+        return str(tx.transaction_id)

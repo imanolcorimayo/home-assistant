@@ -36,12 +36,30 @@ services:
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_BUSINESS_ACCOUNT_ID: ${WHATSAPP_BUSINESS_ACCOUNT_ID:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MCP_URL: http://household_mcp:8000/mcp
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - default
       - tunnel
+    restart: unless-stopped
+
+  # Internal MCP tool server (NOT tunneled). Same image as api, different
+  # command. Reachable by api at http://household_mcp:8000/mcp.
+  mcp:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: household_mcp
+    command: python -m app.mcp_server
+    environment:
+      DATABASE_URL: postgresql+asyncpg://household:${POSTGRES_PASSWORD:-household123}@postgres:5432/household
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
     restart: unless-stopped
 
   web:

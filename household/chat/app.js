@@ -1,5 +1,7 @@
 // Absolute paths: page is served at the site root, API lives under /api.
-const ENDPOINT = "/api/message";
+// Text goes through the expense-registrar agent; media still uses the
+// single-shot parser path (the agent is text-only for now).
+const ENDPOINT = "/api/agent";
 const MEDIA_ENDPOINT = "/api/media";
 
 const $messages = document.getElementById("messages");
