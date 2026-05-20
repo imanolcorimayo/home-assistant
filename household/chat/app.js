@@ -1,8 +1,8 @@
 // Absolute paths: page is served at the site root, API lives under /api.
-// Text goes through the expense-registrar agent; media still uses the
-// single-shot parser path (the agent is text-only for now).
+// Text and media both go through the expense-registrar agent now — the model
+// reads receipt photos / voice notes directly (no separate parser path).
 const ENDPOINT = "/api/agent";
-const MEDIA_ENDPOINT = "/api/media";
+const MEDIA_ENDPOINT = "/api/agent/media";
 
 // Stable per-device id so the agent can keep conversation context across
 // messages (e.g. "sí, guardalo igual" after a duplicate flag).
@@ -60,6 +60,7 @@ async function sendMedia(blob, filename, label) {
   try {
     const fd = new FormData();
     fd.append("file", blob, filename);
+    fd.append("session_id", SESSION_ID);
     const r = await fetch(MEDIA_ENDPOINT, { method: "POST", body: fd });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();

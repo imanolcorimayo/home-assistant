@@ -8,6 +8,7 @@ agent. The google-genai SDK runs the tool-calling loop automatically
 
 import logging
 import os
+from datetime import date
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -50,10 +51,12 @@ _MAX_TURNS = 16  # keep the last N text turns per session
 
 SYSTEM_TMPL = (
     "Sos el registrador de gastos de una familia. Tu ÚNICO trabajo es registrar UN gasto "
-    "a partir del mensaje. No hacés resúmenes ni análisis ni respondés otras preguntas.\n\n"
+    "a partir del mensaje, que puede ser texto, la foto de un comprobante/ticket, o una nota "
+    "de voz. No hacés resúmenes ni análisis ni respondés otras preguntas.\n\n"
     "Pasos:\n"
-    "1. Extraé el gasto: monto (EUR) y una descripción corta. Si se menciona una fecha usala "
-    "(YYYY-MM-DD); si no, es hoy.\n"
+    "1. Extraé el gasto: monto (EUR) y una descripción corta. Hoy es {today}. Si se menciona una "
+    "fecha usala (YYYY-MM-DD); si la fecha no trae año, asumí el año actual ({year}); si no se "
+    "menciona fecha, es hoy.\n"
     "2. ANTES de guardar, llamá a look_up_expenses con una palabra clave del gasto para ver "
     "gastos parecidos recientes.\n"
     "3. Si encontrás uno que parece EL MISMO gasto (monto parecido + descripción parecida + "
@@ -71,25 +74,51 @@ SYSTEM_TMPL = (
 )
 
 
-def _user_turn(text: str):
-    return types.Content(role="user", parts=[types.Part(text=text)])
+def _user_turn(text: str, media: bytes | None = None, media_mime: str | None = None):
+    """A user turn, optionally carrying a receipt photo / voice note inline.
+
+    For media we let the model read it directly (it extracts the expense from
+    the image/audio) instead of the old single-shot parser. A short text part
+    nudges it toward the registrar task when there's no caption.
+    """
+    parts = []
+    if media is not None:
+        parts.append(types.Part.from_bytes(data=media, mime_type=media_mime))
+        parts.append(types.Part(text=text or "Registrá el gasto de este comprobante."))
+    else:
+        parts.append(types.Part(text=text))
+    return types.Content(role="user", parts=parts)
 
 
 def _model_turn(text: str):
     return types.Content(role="model", parts=[types.Part(text=text)])
 
 
-async def run_agent(message: str, session_id: str | None = None) -> str:
+async def run_agent(
+    message: str,
+    session_id: str | None = None,
+    media: bytes | None = None,
+    media_mime: str | None = None,
+) -> str:
     """Run one user message through the expense-registrar loop.
+
+    `message` is the text (a caption when media is present). `media`/`media_mime`
+    carry a receipt photo or voice note the model reads directly.
 
     If session_id is given, prior text turns for that session are replayed so
     follow-ups ("sí, guardalo igual") are understood. Returns the reply text.
     """
     categories = await active_category_names()
-    system = SYSTEM_TMPL.format(categories=", ".join(categories) or "(ninguna)")
+    today = date.today()
+    system = SYSTEM_TMPL.format(
+        categories=", ".join(categories) or "(ninguna)",
+        today=today.isoformat(),
+        year=today.year,
+    )
 
     history = _SESSIONS.get(session_id, []) if session_id else []
-    contents = history + [_user_turn(message)]
+    cur_turn = _user_turn(message, media=media, media_mime=media_mime)
+    contents = history + [cur_turn]
 
     cfg = types.GenerateContentConfig(system_instruction=system, temperature=0.1)
 
@@ -117,5 +146,8 @@ async def run_agent(message: str, session_id: str | None = None) -> str:
 
     reply = (resp.text or "").strip() or "(sin respuesta)"
     if session_id:
-        _SESSIONS[session_id] = (history + [_user_turn(message), _model_turn(reply)])[-_MAX_TURNS:]
+        # Store a text-only version of the turn (a caption, or a placeholder for
+        # bare media) so we don't re-send image/audio bytes on every follow-up.
+        stored_turn = _user_turn(message or "(envió un comprobante)")
+        _SESSIONS[session_id] = (history + [stored_turn, _model_turn(reply)])[-_MAX_TURNS:]
     return reply
