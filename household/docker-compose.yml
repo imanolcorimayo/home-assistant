@@ -26,6 +26,9 @@ services:
     container_name: household_api
     ports:
       - "8081:8080"
+    volumes:
+      # Live-mount the chat UI so HTML/CSS/JS edits don't require a rebuild.
+      - ./chat:/code/chat:ro
     environment:
       DATABASE_URL: postgresql+asyncpg://household:${POSTGRES_PASSWORD:-household123}@postgres:5432/household
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}

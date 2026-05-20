@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Household</title>
+  <link rel="stylesheet" href="./style.css?v=3" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">Household</div>
+    <div class="subtitle">capturá gastos por chat</div>
+  </header>
+
+  <main id="messages" class="messages" aria-live="polite"></main>
+
+  <form id="composer" class="composer" autocomplete="off">
+    <button id="attach" type="button" class="icon-btn" aria-label="adjuntar foto">📷</button>
+    <button id="mic" type="button" class="icon-btn" aria-label="grabar audio">🎤</button>
+    <input
+      id="input"
+      type="text"
+      name="text"
+      placeholder="ej: gasté 1500 en el chino"
+      autocomplete="off"
+      autocapitalize="sentences"
+    />
+    <button id="send" type="submit" aria-label="enviar">↑</button>
+    <input id="image-input" type="file" accept="image/*" hidden />
+  </form>
+
+  <script src="./app.js?v=3"></script>
+</body>
+</html>
