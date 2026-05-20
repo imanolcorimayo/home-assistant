@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Resumen — Household{% endblock %}
+{% block content %}
+  <h1>Resumen mensual</h1>
+  <p class="muted">Ingresos y gastos de los últimos 12 meses.</p>
+
+  <table>
+    <thead>
+      <tr><th>Mes</th><th>Tipo</th><th class="num">Total</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.month }}</td>
+          <td>{{ "Ingreso" if r.kind == "income" else "Gasto" }}</td>
+          <td class="num">{{ "%.2f"|format(r.total) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">Sin datos todavía.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

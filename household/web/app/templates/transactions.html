@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Movimientos — Household{% endblock %}
+{% block content %}
+  <h1>Movimientos</h1>
+  <p class="muted">Últimos 100 movimientos.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Fecha</th><th>Tipo</th><th>Categoría</th>
+        <th>Descripción</th><th>Cuenta</th><th>Quién</th><th class="num">Monto</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.transaction_date }}</td>
+          <td>{{ "Ingreso" if r.kind == "income" else "Gasto" }}</td>
+          <td>{{ r.category }}</td>
+          <td>{{ r.description or "" }}</td>
+          <td>{{ r.account }}</td>
+          <td>{{ r.member }}</td>
+          <td class="num">{{ "%.2f"|format(r.amount) }} {{ r.currency }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">Sin movimientos todavía.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

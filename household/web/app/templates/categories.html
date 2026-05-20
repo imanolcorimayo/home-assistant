@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Categorías — Household{% endblock %}
+{% block content %}
+  <h1>Categorías</h1>
+
+  <form class="row-form" method="post" action="/categories">
+    <input type="text" name="name" placeholder="Nueva categoría" required />
+    <select name="grupo">
+      <option value="">(sin grupo)</option>
+      <option value="variable">variable</option>
+      <option value="fijo">fijo</option>
+      <option value="ingreso">ingreso</option>
+    </select>
+    <button type="submit">Agregar</button>
+  </form>
+
+  <table>
+    <thead>
+      <tr><th>Nombre</th><th>Grupo</th><th>Activa</th><th class="num">Movimientos</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.name }}</td>
+          <td>{{ r.grupo or "—" }}</td>
+          <td>{{ "sí" if r.is_active else "no" }}</td>
+          <td class="num">{{ r.tx_count }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

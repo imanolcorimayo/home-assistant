@@ -44,6 +44,28 @@ services:
       - tunnel
     restart: unless-stopped
 
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: household_web
+    ports:
+      - "8082:8080"
+    volumes:
+      # Live-mount templates/static/code so edits don't require a rebuild.
+      - ./web/app:/code/app:ro
+    environment:
+      # Plain postgresql:// DSN — asyncpg, not the server's +asyncpg form.
+      DATABASE_URL: postgresql://household:${POSTGRES_PASSWORD:-household123}@postgres:5432/household
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+      # Attached so its own Cloudflare hostname can reach it (household_web:8080).
+      - tunnel
+    restart: unless-stopped
+
   adminer:
     image: adminer:latest
     container_name: household_adminer
