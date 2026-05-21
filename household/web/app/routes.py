@@ -5,6 +5,7 @@ Conventions from the schema: soft-deleted transactions are hidden with
 asyncpg uses $1, $2... placeholders (never string-format SQL values).
 """
 
+import json
 import math
 import os
 from datetime import date
@@ -106,6 +107,62 @@ async def transactions(request: Request, q: str = Query(""), page: int = Query(1
     return templates.TemplateResponse(
         "transactions.html",
         {"request": request, "rows": rows, "q": q,
+         "page": page, "total_pages": total_pages, "total": total},
+    )
+
+
+@router.get("/agent-runs")
+async def agent_runs(request: Request, q: str = Query(""), page: int = Query(1)):
+    """Read-only log of registrar-agent runs (issue #18). One row per message,
+    showing the tools fired (with their args) and the token cost. The header
+    table totals tokens per day so we can eyeball the running cost."""
+    q = q.strip()
+    page = max(page, 1)
+
+    where = "TRUE"
+    args: list = []
+    if q:
+        args.append(f"%{q}%")
+        where = (f"(input_text ILIKE ${len(args)} OR reply_text ILIKE ${len(args)}"
+                 f" OR model_used ILIKE ${len(args)})")
+
+    total = (await db.fetchrow(f"SELECT count(*) AS n FROM agent_run WHERE {where}", *args))["n"]
+    total_pages = max(math.ceil(total / PAGE_SIZE), 1)
+
+    # tool_calls comes back as a JSON string (no asyncpg codec) — parse it so
+    # the template can render each tool's name and the args it was called with.
+    raw = await db.fetch(
+        f"""
+        SELECT created_ts, session_id, input_text, reply_text, model_used, error,
+               tool_calls, total_tokens
+        FROM agent_run
+        WHERE {where}
+        ORDER BY created_ts DESC
+        LIMIT ${len(args) + 1} OFFSET ${len(args) + 2}
+        """,
+        *args, PAGE_SIZE, (page - 1) * PAGE_SIZE,
+    )
+    rows = []
+    for r in raw:
+        row = dict(r)
+        try:
+            row["tools"] = json.loads(r["tool_calls"]) if r["tool_calls"] else []
+        except (TypeError, ValueError):
+            row["tools"] = []
+        rows.append(row)
+
+    # Daily token totals — the "cost" view. Newest day first, last 14 days.
+    daily = await db.fetch(
+        """
+        SELECT date(created_ts) AS day, count(*) AS runs,
+               coalesce(sum(total_tokens), 0) AS tokens
+        FROM agent_run
+        GROUP BY 1 ORDER BY 1 DESC LIMIT 14
+        """
+    )
+    return templates.TemplateResponse(
+        "agent_runs.html",
+        {"request": request, "rows": rows, "daily": daily, "q": q,
          "page": page, "total_pages": total_pages, "total": total},
     )
 

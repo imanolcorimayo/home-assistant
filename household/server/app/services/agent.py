@@ -6,6 +6,7 @@ agent. The google-genai SDK runs the tool-calling loop automatically
 (look_up_expenses -> decide -> add_expense / flag).
 """
 
+import asyncio
 import logging
 import os
 from datetime import date
@@ -16,6 +17,8 @@ from google.genai import types
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
+from app.database import AsyncSessionLocal
+from app.models import AgentRun
 from app.services.transactions import active_category_names, recent_expenses
 
 log = logging.getLogger("agent")
@@ -105,6 +108,74 @@ def _model_turn(text: str):
     return types.Content(role="model", parts=[types.Part(text=text)])
 
 
+def _extract_tool_calls(resp) -> list[dict]:
+    """Pull the tools the agent fired out of the SDK's auto function-calling
+    history. Returns [{"name", "args"}, …]; [] when it answered directly.
+
+    The SDK runs tools for us and records every call here, so we just read it
+    once after the run — no live interception. Defensive: any shape we don't
+    recognise yields [] rather than breaking the (background) logging path.
+    """
+    calls: list[dict] = []
+    try:
+        for content in getattr(resp, "automatic_function_calling_history", None) or []:
+            for part in getattr(content, "parts", None) or []:
+                fc = getattr(part, "function_call", None)
+                if fc is not None:
+                    calls.append({"name": fc.name, "args": dict(fc.args or {})})
+    except Exception:  # noqa: BLE001 - logging must never break the request
+        log.warning("could not extract tool calls from response", exc_info=True)
+    return calls
+
+
+def _extract_usage(resp) -> tuple[int | None, int | None, int | None]:
+    """(prompt, output, total) token counts from the response's usage_metadata,
+    or (None, None, None) if it's missing — same defensive stance as the tool
+    extraction, so logging never breaks on an unexpected shape."""
+    um = getattr(resp, "usage_metadata", None)
+    if um is None:
+        return None, None, None
+    return (
+        getattr(um, "prompt_token_count", None),
+        getattr(um, "candidates_token_count", None),
+        getattr(um, "total_token_count", None),
+    )
+
+
+async def _log_run(
+    session_id: str | None,
+    input_text: str,
+    reply_text: str | None,
+    model_used: str | None,
+    tool_calls: list[dict],
+    error: str | None,
+    prompt_tokens: int | None = None,
+    output_tokens: int | None = None,
+    total_tokens: int | None = None,
+) -> None:
+    """Persist one agent_run row. Fire-and-forget: scheduled with
+    asyncio.create_task after the reply is sent, so it never adds latency.
+    Swallows its own errors — a failed log must not surface to the user."""
+    try:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                AgentRun(
+                    session_id=session_id,
+                    input_text=input_text,
+                    reply_text=reply_text,
+                    model_used=model_used,
+                    tool_calls=tool_calls,
+                    error=error,
+                    prompt_tokens=prompt_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                )
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001 - background logging is best-effort
+        log.warning("agent_run logging failed", exc_info=True)
+
+
 async def run_agent(
     message: str,
     session_id: str | None = None,
@@ -137,27 +208,41 @@ async def run_agent(
 
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     resp = None
+    model_used: str | None = None
     last_err: BaseException | None = None
-    async with streamablehttp_client(MCP_URL) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            cfg.tools = [session]
-            for model in MODELS:
-                try:
-                    resp = await client.aio.models.generate_content(
-                        model=model, contents=contents, config=cfg
-                    )
-                    break
-                except BaseException as exc:  # noqa: BLE001 - inspected below
-                    if _is_quota_error(exc):
-                        log.warning("model %s quota exhausted, rotating", model)
-                        last_err = exc
-                        continue
-                    raise
-    if resp is None:
-        raise last_err or RuntimeError("no model produced a response")
+    try:
+        async with streamablehttp_client(MCP_URL) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                cfg.tools = [session]
+                for model in MODELS:
+                    try:
+                        resp = await client.aio.models.generate_content(
+                            model=model, contents=contents, config=cfg
+                        )
+                        model_used = model
+                        break
+                    except BaseException as exc:  # noqa: BLE001 - inspected below
+                        if _is_quota_error(exc):
+                            log.warning("model %s quota exhausted, rotating", model)
+                            last_err = exc
+                            continue
+                        raise
+        if resp is None:
+            raise last_err or RuntimeError("no model produced a response")
+        reply = (resp.text or "").strip() or "(sin respuesta)"
+    except BaseException as exc:  # noqa: BLE001 - log the failed run, then re-raise
+        asyncio.create_task(
+            _log_run(session_id, message, None, model_used, [], str(exc))
+        )
+        raise
 
-    reply = (resp.text or "").strip() or "(sin respuesta)"
+    # Log the run in the background so persistence never delays the reply.
+    prompt_tok, output_tok, total_tok = _extract_usage(resp)
+    asyncio.create_task(
+        _log_run(session_id, message, reply, model_used, _extract_tool_calls(resp), None,
+                 prompt_tok, output_tok, total_tok)
+    )
     if session_id:
         # Store a text-only version of the turn (a caption, or a placeholder for
         # bare media) so we don't re-send image/audio bytes on every follow-up.

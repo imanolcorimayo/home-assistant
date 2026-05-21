@@ -13,6 +13,7 @@
   ("/transactions", "Movimientos",  "receipt"),
   ("/analytics",    "Análisis",     "chart"),
   ("/budgets",      "Presupuestos", "wallet"),
+  ("/agent-runs",   "Actividad IA", "activity"),
   ("/settings",     "Ajustes del agente", "settings"),
 ] %}
 {% set path = request.url.path %}
@@ -49,7 +50,7 @@
   </div>
 
   {# Mobile bottom bar — hidden on desktop. #}
-  <nav class="md:hidden fixed bottom-0 inset-x-0 bg-ink text-white grid grid-cols-5 border-t border-white/10">
+  <nav class="md:hidden fixed bottom-0 inset-x-0 bg-ink text-white grid grid-cols-6 border-t border-white/10">
     {% for href, label, ic in nav %}
       <a href="{{ href }}"
          class="flex flex-col items-center gap-0.5 py-2 text-[10px]

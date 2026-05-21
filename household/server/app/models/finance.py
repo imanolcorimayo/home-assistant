@@ -22,6 +22,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -146,6 +147,31 @@ class Category(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_ts: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_ts: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
+
+class AgentRun(Base):
+    """One row per user message run through the registrar agent — written
+    fire-and-forget after the reply is sent (see services/agent.py). Read-only
+    observability: what was said, what the agent replied, which tools it fired.
+    """
+
+    __tablename__ = "agent_run"
+
+    agent_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    session_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    input_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reply_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model_used: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # List of tools the agent fired this run; [] means it answered directly.
+    tool_calls: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Token usage from the Gemini response (NULL when the run errored early).
+    prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_ts: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class Transaction(Base):

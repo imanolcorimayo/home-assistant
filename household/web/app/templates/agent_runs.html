@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header, pager, icon %}
+{% block title %}Actividad IA — Household{% endblock %}
+{% block content %}
+  {% call page_header("Actividad IA", total ~ " ejecuciones del agente") %}
+    <form method="get" action="/agent-runs" class="relative">
+      <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{{ icon('search', 'w-4 h-4') }}</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="Buscar…"
+             class="w-44 md:w-64 pl-9 pr-3 py-2 text-sm rounded-lg border border-line bg-surface
+                    focus:outline-none focus:ring-2 focus:ring-ink/10" />
+    </form>
+  {% endcall %}
+
+  {# Cost view: tokens per day. #}
+  {% if daily %}
+    <div class="mb-6">
+      <h2 class="text-sm font-semibold text-muted mb-2">Uso de tokens por día</h2>
+      <div class="bg-surface border border-line rounded-xl overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-xs uppercase tracking-wide text-muted bg-bg">
+            <tr>
+              <th class="text-left px-5 py-2.5">Día</th>
+              <th class="px-5 py-2.5 num">Ejecuciones</th>
+              <th class="px-5 py-2.5 num">Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in daily %}
+              <tr class="border-t border-line">
+                <td class="px-5 py-2 whitespace-nowrap">{{ d.day.strftime("%d/%m/%Y") }}</td>
+                <td class="px-5 py-2 num">{{ d.runs }}</td>
+                <td class="px-5 py-2 num">{{ "{:,}".format(d.tokens).replace(",", ".") }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="bg-surface border border-line rounded-xl overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-xs uppercase tracking-wide text-muted bg-bg">
+        <tr>
+          <th class="text-left px-5 py-2.5 whitespace-nowrap">Cuándo</th>
+          <th class="text-left px-5 py-2.5">Sesión</th>
+          <th class="text-left px-5 py-2.5">Mensaje</th>
+          <th class="text-left px-5 py-2.5">Respuesta</th>
+          <th class="text-left px-5 py-2.5">Herramientas</th>
+          <th class="px-5 py-2.5 num">Tokens</th>
+          <th class="text-left px-5 py-2.5">Modelo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr class="border-t border-line align-top hover:bg-bg/60">
+            <td class="px-5 py-2.5 whitespace-nowrap text-muted">{{ r.created_ts.strftime("%d/%m %H:%M") }}</td>
+            <td class="px-5 py-2.5 whitespace-nowrap" title="{{ r.session_id or '' }}">
+              {% if r.session_id %}
+                <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-bg border border-line">{{ r.session_id[:8] }}</span>
+              {% else %}
+                <span class="text-muted text-xs">—</span>
+              {% endif %}
+            </td>
+            <td class="px-5 py-2.5 max-w-xs truncate" title="{{ r.input_text or '' }}">{{ r.input_text or "—" }}</td>
+            <td class="px-5 py-2.5 max-w-xs">
+              {% if r.error %}
+                <span class="text-expense">⚠ {{ r.error }}</span>
+              {% else %}
+                <span class="truncate inline-block max-w-xs align-bottom" title="{{ r.reply_text or '' }}">{{ r.reply_text or "—" }}</span>
+              {% endif %}
+            </td>
+            <td class="px-5 py-2.5">
+              {% if r.tools %}
+                <div class="space-y-1">
+                  {% for t in r.tools %}
+                    <div class="text-xs">
+                      <span class="px-2 py-0.5 rounded-md bg-bg border border-line whitespace-nowrap">{{ t.name }}</span>
+                      {% if t.args %}
+                        <span class="text-muted">{% for k, v in t.args.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <span class="text-muted text-xs">sin herramientas</span>
+              {% endif %}
+            </td>
+            <td class="px-5 py-2.5 num text-muted whitespace-nowrap">{{ r.total_tokens if r.total_tokens is not none else "—" }}</td>
+            <td class="px-5 py-2.5 text-muted text-xs whitespace-nowrap">{{ r.model_used or "—" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="px-5 py-4 text-muted">
+            {{ "Sin resultados para “" ~ q ~ "”." if q else "El agente todavía no registró ninguna ejecución." }}
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {{ pager(page, total_pages, q) }}
+{% endblock %}

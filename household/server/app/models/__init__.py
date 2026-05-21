@@ -1,6 +1,7 @@
 from app.models.finance import (
     Account,
     AccountKind,
+    AgentRun,
     Category,
     FamilyMember,
     MonthlyBudget,
@@ -13,6 +14,7 @@ from app.models.finance import (
 __all__ = [
     "Account",
     "AccountKind",
+    "AgentRun",
     "Category",
     "FamilyMember",
     "MonthlyBudget",
