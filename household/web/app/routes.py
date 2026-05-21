@@ -110,43 +110,6 @@ async def transactions(request: Request, q: str = Query(""), page: int = Query(1
     )
 
 
-@router.get("/categories")
-async def categories(request: Request, q: str = Query("")):
-    q = q.strip()
-    where = "TRUE"
-    args: list = []
-    if q:
-        args.append(f"%{q}%")
-        where = f"c.name ILIKE ${len(args)}"
-
-    rows = await db.fetch(
-        f"""
-        SELECT c.category_id, c.name, c.grupo, c.is_active,
-               count(t.transaction_id) AS tx_count
-        FROM category c
-        LEFT JOIN transaction t
-               ON t.category_id = c.category_id AND t.deleted_ts IS NULL
-        WHERE {where}
-        GROUP BY c.category_id
-        ORDER BY c.name
-        """,
-        *args,
-    )
-    return templates.TemplateResponse(
-        "categories.html", {"request": request, "rows": rows, "q": q}
-    )
-
-
-@router.post("/categories")
-async def create_category(name: str = Form(...), grupo: str = Form("")):
-    await db.execute(
-        "INSERT INTO category (name, grupo) VALUES ($1, NULLIF($2, '')) ON CONFLICT (name) DO NOTHING",
-        name.strip(),
-        grupo.strip(),
-    )
-    return RedirectResponse("/categories", status_code=303)
-
-
 def _last_12_months() -> list[str]:
     """['YYYY-MM', …] for the trailing 12 months, oldest first — the shared
     x-axis for the trend and savings-rate charts, so months with no rows
@@ -271,8 +234,93 @@ async def budgets(request: Request):
     )
 
 
+# Account types — enum value -> Spanish label for the form and table.
+ACCOUNT_KINDS = {
+    "checking":    "Cuenta corriente",
+    "savings":     "Ahorro",
+    "cash":        "Efectivo",
+    "credit_card": "Tarjeta de crédito",
+}
+
+
 @router.get("/settings")
 async def settings(request: Request):
-    return templates.TemplateResponse(
-        "placeholder.html", {"request": request, "title": "Ajustes", "rows": []}
+    # Three config sections, view + add. Each fetched in display order.
+    members = await db.fetch(
+        """
+        SELECT family_member_id, full_name, telegram_user_id, is_active
+        FROM family_member ORDER BY full_name
+        """
     )
+    # Saldo actual = saldo inicial + ingresos − gastos (sólo movimientos vivos).
+    accounts = await db.fetch(
+        """
+        SELECT a.account_id, a.name, a.kind, a.currency,
+               a.initial_balance, a.is_active, m.full_name AS owner,
+               a.initial_balance
+                 + coalesce(sum(t.amount) FILTER (WHERE t.kind = 'income'),  0)
+                 - coalesce(sum(t.amount) FILTER (WHERE t.kind = 'expense'), 0) AS balance
+        FROM account a
+        LEFT JOIN family_member m ON m.family_member_id = a.family_member_id
+        LEFT JOIN transaction t
+               ON t.account_id = a.account_id AND t.deleted_ts IS NULL
+        GROUP BY a.account_id, m.full_name
+        ORDER BY a.name
+        """
+    )
+    categories = await db.fetch(
+        """
+        SELECT c.category_id, c.name, c.grupo, c.is_active,
+               count(t.transaction_id) AS tx_count
+        FROM category c
+        LEFT JOIN transaction t
+               ON t.category_id = c.category_id AND t.deleted_ts IS NULL
+        GROUP BY c.category_id
+        ORDER BY c.name
+        """
+    )
+    return templates.TemplateResponse(
+        "settings.html",
+        {"request": request, "members": members, "accounts": accounts,
+         "categories": categories, "account_kinds": ACCOUNT_KINDS},
+    )
+
+
+@router.post("/settings/member")
+async def create_member(full_name: str = Form(...)):
+    await db.execute(
+        "INSERT INTO family_member (full_name) VALUES ($1)", full_name.strip()
+    )
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/account")
+async def create_account(
+    name: str = Form(...),
+    kind: str = Form(...),
+    family_member_id: str = Form(""),
+    currency: str = Form("EUR"),
+    initial_balance: str = Form("0"),
+):
+    await db.execute(
+        """
+        INSERT INTO account (name, kind, family_member_id, currency, initial_balance)
+        VALUES ($1, $2::account_kind, NULLIF($3, '')::uuid, $4, $5::numeric)
+        """,
+        name.strip(),
+        kind,
+        family_member_id.strip(),
+        (currency.strip() or "EUR").upper()[:3],
+        initial_balance.strip() or "0",
+    )
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/category")
+async def create_category(name: str = Form(...), grupo: str = Form("")):
+    await db.execute(
+        "INSERT INTO category (name, grupo) VALUES ($1, NULLIF($2, '')) ON CONFLICT (name) DO NOTHING",
+        name.strip(),
+        grupo.strip(),
+    )
+    return RedirectResponse("/settings", status_code=303)

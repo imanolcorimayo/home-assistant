@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header, icon %}
+{% block title %}Ajustes del agente — Household{% endblock %}
+
+{# Section shell: icon + title + a short note on how the section is used,
+   then whatever the caller puts inside (add form + table). #}
+{% macro section(ic, title, note) -%}
+<section class="mb-8">
+  <div class="flex items-start gap-3 mb-3">
+    <span class="text-muted mt-0.5">{{ icon(ic, 'w-5 h-5') }}</span>
+    <div>
+      <h2 class="text-lg font-semibold leading-tight">{{ title }}</h2>
+      <p class="text-sm text-muted mt-0.5 max-w-2xl">{{ note }}</p>
+    </div>
+  </div>
+  {{ caller() }}
+</section>
+{%- endmacro %}
+
+{% set input = "border border-line rounded-lg px-3 py-2 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-ink/10" %}
+
+{% block content %}
+  {{ page_header("Ajustes del agente", "Datos del hogar que el agente lee para registrar y clasificar: cuentas, miembros y categorías.") }}
+
+  {# ─── Cuentas ─────────────────────────────────────────────── #}
+  {% call section("wallet", "Cuentas",
+       "Dónde vive el dinero. Cada movimiento se asigna a una cuenta; su moneda
+        define la del gasto y el saldo inicial es el punto de partida para
+        calcular el balance.") %}
+    <form method="post" action="/settings/account"
+          class="flex flex-wrap gap-2 mb-4 bg-surface border border-line rounded-xl p-3">
+      <input type="text" name="name" placeholder="Nombre" required class="flex-1 min-w-36 {{ input }}" />
+      <select name="kind" class="{{ input }}">
+        {% for value, label in account_kinds.items() %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <select name="family_member_id" class="{{ input }}">
+        <option value="">Compartida</option>
+        {% for m in members %}
+          <option value="{{ m.family_member_id }}">{{ m.full_name }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="currency" value="EUR" maxlength="3" class="w-20 uppercase {{ input }}" />
+      <input type="number" step="0.01" name="initial_balance" value="0" placeholder="Saldo inicial"
+             class="w-32 {{ input }} num" />
+      <button type="submit"
+              class="inline-flex items-center gap-1.5 bg-ink text-white rounded-lg px-4 py-2 text-sm hover:opacity-90">
+        {{ icon('plus', 'w-4 h-4') }} Agregar
+      </button>
+    </form>
+
+    <div class="bg-surface border border-line rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase tracking-wide text-muted bg-bg">
+          <tr>
+            <th class="text-left px-5 py-2.5">Nombre</th>
+            <th class="text-left px-5 py-2.5">Tipo</th>
+            <th class="text-left px-5 py-2.5">Titular</th>
+            <th class="text-left px-5 py-2.5">Moneda</th>
+            <th class="px-5 py-2.5 num">Saldo inicial</th>
+            <th class="px-5 py-2.5 num">Saldo actual</th>
+            <th class="text-left px-5 py-2.5">Activa</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in accounts %}
+            <tr class="border-t border-line hover:bg-bg/60">
+              <td class="px-5 py-2.5">{{ a.name }}</td>
+              <td class="px-5 py-2.5 text-muted">{{ account_kinds.get(a.kind, a.kind) }}</td>
+              <td class="px-5 py-2.5">{{ a.owner or "Compartida" }}</td>
+              <td class="px-5 py-2.5">{{ a.currency }}</td>
+              <td class="px-5 py-2.5 num">{{ "%.2f"|format(a.initial_balance) }}</td>
+              <td class="px-5 py-2.5 num font-medium">{{ "%.2f"|format(a.balance) }} {{ a.currency }}</td>
+              <td class="px-5 py-2.5">{{ "sí" if a.is_active else "no" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="px-5 py-4 text-muted">Sin cuentas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {# ─── Miembros ────────────────────────────────────────────── #}
+  {% call section("users", "Miembros",
+       "Quiénes integran el hogar. Cada movimiento se atribuye a un miembro; al
+        vincular su chat puede registrar gastos por mensaje.") %}
+    <form method="post" action="/settings/member"
+          class="flex flex-wrap gap-2 mb-4 bg-surface border border-line rounded-xl p-3">
+      <input type="text" name="full_name" placeholder="Nombre completo" required
+             class="flex-1 min-w-40 {{ input }}" />
+      <button type="submit"
+              class="inline-flex items-center gap-1.5 bg-ink text-white rounded-lg px-4 py-2 text-sm hover:opacity-90">
+        {{ icon('plus', 'w-4 h-4') }} Agregar
+      </button>
+    </form>
+
+    <div class="bg-surface border border-line rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase tracking-wide text-muted bg-bg">
+          <tr>
+            <th class="text-left px-5 py-2.5">Nombre</th>
+            <th class="text-left px-5 py-2.5">Chat vinculado</th>
+            <th class="text-left px-5 py-2.5">Activo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in members %}
+            <tr class="border-t border-line hover:bg-bg/60">
+              <td class="px-5 py-2.5">{{ m.full_name }}</td>
+              <td class="px-5 py-2.5 text-muted">{{ "sí" if m.telegram_user_id else "—" }}</td>
+              <td class="px-5 py-2.5">{{ "sí" if m.is_active else "no" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="px-5 py-4 text-muted">Sin miembros.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+
+  {# ─── Categorías ──────────────────────────────────────────── #}
+  {% call section("tag", "Categorías",
+       "Cómo se clasifica el gasto. El agente asigna cada movimiento a una
+        categoría; el grupo (fijo/variable/ingreso) las agrupa para los análisis.") %}
+    <form method="post" action="/settings/category"
+          class="flex flex-wrap gap-2 mb-4 bg-surface border border-line rounded-xl p-3">
+      <input type="text" name="name" placeholder="Nueva categoría" required
+             class="flex-1 min-w-40 {{ input }}" />
+      <select name="grupo" class="{{ input }}">
+        <option value="">(sin grupo)</option>
+        <option value="variable">variable</option>
+        <option value="fijo">fijo</option>
+        <option value="ingreso">ingreso</option>
+      </select>
+      <button type="submit"
+              class="inline-flex items-center gap-1.5 bg-ink text-white rounded-lg px-4 py-2 text-sm hover:opacity-90">
+        {{ icon('plus', 'w-4 h-4') }} Agregar
+      </button>
+    </form>
+
+    <div class="bg-surface border border-line rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase tracking-wide text-muted bg-bg">
+          <tr>
+            <th class="text-left px-5 py-2.5">Nombre</th>
+            <th class="text-left px-5 py-2.5">Grupo</th>
+            <th class="text-left px-5 py-2.5">Activa</th>
+            <th class="px-5 py-2.5 num">Movimientos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in categories %}
+            <tr class="border-t border-line hover:bg-bg/60">
+              <td class="px-5 py-2.5">{{ c.name }}</td>
+              <td class="px-5 py-2.5 text-muted">{{ c.grupo or "—" }}</td>
+              <td class="px-5 py-2.5">{{ "sí" if c.is_active else "no" }}</td>
+              <td class="px-5 py-2.5 num">{{ c.tx_count }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="px-5 py-4 text-muted">Sin categorías.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endcall %}
+{% endblock %}
