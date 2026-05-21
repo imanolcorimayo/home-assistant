@@ -85,7 +85,7 @@ async def _handle_message(msg: dict) -> None:
 
     tx_id = None
     if parsed:
-        tx_id = await save_parsed(parsed, sender_wa_id=sender)
+        tx_id = await save_parsed(parsed, sender_id=sender)
     await send_text(sender, _format_parsed(parsed, tx_id))
 
 
@@ -126,5 +126,5 @@ async def debug_parse_and_save(text: str):
     POST /webhook/debug/parse_and_save?text=gasté%201500%20en%20supermercado
     """
     parsed = await parse_transaction(text=text)
-    tx_id = await save_parsed(parsed, sender_wa_id="debug") if parsed else None
+    tx_id = await save_parsed(parsed, sender_id="debug") if parsed else None
     return {"parsed": parsed, "transaction_id": tx_id}

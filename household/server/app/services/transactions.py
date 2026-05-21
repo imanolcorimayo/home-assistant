@@ -20,6 +20,8 @@ from app.models import (
     Account,
     Category,
     FamilyMember,
+    MonthlyBudget,
+    RecurringCharge,
     Transaction,
     TransactionKind,
     TransactionSource,
@@ -99,6 +101,126 @@ async def recent_expenses(
     return await recent_transactions(limit=limit, days=days, term=term, kind="expense")
 
 
+async def build_household_context() -> dict:
+    """Read full household configuration from DB. Used to inject context into
+    Gemini prompts (agent + parser) so it knows about real accounts, members,
+    budgets, and recurring charges — not just category names.
+
+    Single round-trip per request; the family is small enough that a single
+    eager load is cheaper than lazy fetching via MCP tools."""
+    async with AsyncSessionLocal() as session:
+        members_rows = (await session.scalars(
+            select(FamilyMember).where(FamilyMember.is_active).order_by(FamilyMember.created_ts)
+        )).all()
+        accounts_rows = (await session.scalars(
+            select(Account).where(Account.is_active).order_by(Account.created_ts)
+        )).all()
+        owners = {m.family_member_id: m.full_name for m in members_rows}
+        categories = await active_category_names()
+        budgets_rows = (await session.scalars(
+            select(MonthlyBudget).order_by(MonthlyBudget.subcategory_1)
+        )).all()
+        recurring_rows = (await session.scalars(
+            select(RecurringCharge).where(RecurringCharge.is_active).order_by(RecurringCharge.name)
+        )).all()
+        accounts_by_id = {a.account_id: a.name for a in accounts_rows}
+
+        return {
+            "members": [{"name": m.full_name} for m in members_rows],
+            "accounts": [
+                {
+                    "name": a.name,
+                    "kind": a.kind.value,
+                    "currency": a.currency,
+                    "owner": owners.get(a.family_member_id) if a.family_member_id else None,
+                }
+                for a in accounts_rows
+            ],
+            "categories": categories,
+            "budgets": [
+                {"category": b.subcategory_1, "limit": float(b.limit_amount)}
+                for b in budgets_rows
+            ],
+            "recurring": [
+                {
+                    "name": r.name,
+                    "amount": float(r.amount),
+                    "day": r.day_of_month,
+                    "category": r.category,
+                    "account": accounts_by_id.get(r.account_id, "?"),
+                }
+                for r in recurring_rows
+            ],
+        }
+
+
+def format_context_for_prompt(ctx: dict) -> str:
+    """Render the household context as compact Spanish text for system prompts.
+    Sections are omitted when empty so the prompt doesn't lie about absent data."""
+    lines: list[str] = ["=== Contexto familiar ==="]
+
+    members = [m["name"] for m in ctx.get("members", [])]
+    if members:
+        lines.append("Miembros: " + ", ".join(members))
+
+    accounts = ctx.get("accounts", [])
+    if accounts:
+        lines.append("Cuentas:")
+        for a in accounts:
+            owner = a.get("owner") or "compartida"
+            lines.append(f"- {a['name']} ({a['kind']}, {a['currency']}) — {owner}")
+
+    budgets = ctx.get("budgets", [])
+    if budgets:
+        lines.append("Presupuestos mensuales:")
+        for b in budgets:
+            lines.append(f"- {b['category']}: {b['limit']:g} EUR")
+
+    recurring = ctx.get("recurring", [])
+    if recurring:
+        lines.append("Gastos recurrentes:")
+        for r in recurring:
+            lines.append(
+                f"- {r['name']}: {r['amount']:g} EUR el día {r['day']} "
+                f"({r['category']}, {r['account']})"
+            )
+
+    return "\n".join(lines)
+
+
+async def _resolve_hint(session: AsyncSession, hint: Optional[str], column, model):
+    """Generic fuzzy match: exact ci match first, then ILIKE %hint%."""
+    if not hint:
+        return None
+    needle = hint.strip()
+    if not needle:
+        return None
+    row = await session.scalar(
+        select(model).where(func.lower(column) == needle.lower())
+    )
+    if row is not None:
+        return row
+    return await session.scalar(
+        select(model).where(column.ilike(f"%{needle}%"))
+    )
+
+
+async def resolve_account_hint(session: AsyncSession, hint: Optional[str]) -> Optional[Account]:
+    """Match a free-text account hint ('Visa', 'efectivo') to a real Account."""
+    row = await _resolve_hint(session, hint, Account.name, Account)
+    if row is None or not row.is_active:
+        return None
+    return row
+
+
+async def resolve_member_hint(session: AsyncSession, hint: Optional[str]):
+    """Match a free-text member hint ('Luisiana') to a real FamilyMember id."""
+    row = await _resolve_hint(session, hint, FamilyMember.full_name, FamilyMember)
+    if row is None or not row.is_active:
+        return None
+    return row.family_member_id
+
+
 async def _resolve_category(session: AsyncSession, name: Optional[str]) -> tuple[str, Optional[object]]:
     """Map a (possibly fuzzy) category name to (canonical_name, category_id).
     Falls back to DEFAULT_CATEGORY when the name is missing/unknown."""
@@ -152,8 +274,20 @@ async def _pick_defaults(session: AsyncSession) -> Optional[tuple]:
     return member_id, account
 
 
-async def save_parsed(parsed: dict, sender_wa_id: str) -> Optional[str]:
+async def save_parsed(
+    parsed: dict,
+    sender_id: str,
+    sender_member_id=None,
+    source: str = "whatsapp",
+) -> Optional[str]:
     """Insert one row in `transaction` from a Gemini-parsed payload.
+
+    `sender_id` is a free-text identifier of the sender (wa_id, telegram id
+    as string, etc) — stored in llm_raw_output for traceability.
+    `sender_member_id` is the resolved family_member_id of the sender; when
+    provided, it replaces the global default. The parser's family_member_hint
+    can still override it (e.g. "Luisiana gastó X" sent by Hector).
+    `source` controls the TransactionSource enum ('whatsapp' or 'telegram').
 
     Returns the new transaction_id (str) on success, None if skipped or failed.
     Skips when kind is missing or amount is non-positive — those rows are
@@ -174,11 +308,23 @@ async def save_parsed(parsed: dict, sender_wa_id: str) -> Optional[str]:
         log.info("skip save: confidence=low — would prefer to ask user, MVP just drops")
         return None
 
+    try:
+        src = TransactionSource(source)
+    except ValueError:
+        src = TransactionSource.whatsapp
+
     async with AsyncSessionLocal() as session:
         defaults = await _pick_defaults(session)
         if defaults is None:
             return None
-        member_id, account = defaults
+        default_member_id, default_account = defaults
+        if sender_member_id is not None:
+            default_member_id = sender_member_id
+
+        hinted_account = await resolve_account_hint(session, parsed.get("account_hint"))
+        account = hinted_account or default_account
+        hinted_member_id = await resolve_member_hint(session, parsed.get("family_member_hint"))
+        member_id = hinted_member_id or default_member_id
 
         tx_date = _parse_date(parsed.get("transaction_date")) or date_cls.today()
         category_name, category_id = await _resolve_category(session, parsed.get("category"))
@@ -194,9 +340,9 @@ async def save_parsed(parsed: dict, sender_wa_id: str) -> Optional[str]:
             description=parsed.get("description"),
             transaction_date=tx_date,
             value_date=tx_date,
-            source=TransactionSource("whatsapp"),
+            source=src,
             llm_confidence=CONFIDENCE_MAP.get(confidence_label),
-            llm_raw_output={**parsed, "_sender_wa_id": sender_wa_id},
+            llm_raw_output={**parsed, "_sender_id": sender_id, "_source": source},
         )
         session.add(tx)
         try:
@@ -218,12 +364,16 @@ async def create_transaction(
     category: Optional[str] = None,
     transaction_date: Optional[str] = None,
     source: str = "manual",
+    account_hint: Optional[str] = None,
+    family_member_hint: Optional[str] = None,
 ) -> Optional[str]:
     """Insert one transaction from explicit fields (used by the MCP add_transaction tool).
 
     Unlike save_parsed there's no confidence gating — the caller already
     decided to write. Account/member default to the oldest active; currency
     comes from the account; category resolves to category_id (or fallback).
+    `account_hint` / `family_member_hint` allow fuzzy-matching real rows
+    (e.g. 'Visa' -> 'Visa Hector') before falling back to defaults.
     Returns the new transaction_id, or None on validation/DB failure.
     """
     if kind not in ("expense", "income"):
@@ -242,7 +392,13 @@ async def create_transaction(
         defaults = await _pick_defaults(session)
         if defaults is None:
             return None
-        member_id, account = defaults
+        default_member_id, default_account = defaults
+
+        hinted_account = await resolve_account_hint(session, account_hint)
+        account = hinted_account or default_account
+        hinted_member_id = await resolve_member_hint(session, family_member_hint)
+        member_id = hinted_member_id or default_member_id
+
         tx_date = _parse_date(transaction_date) or date_cls.today()
         category_name, category_id = await _resolve_category(session, category)
 

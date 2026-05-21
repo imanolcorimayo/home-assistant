@@ -11,7 +11,7 @@ import base64
 import logging
 
 from app.services import gemini
-from app.services.transactions import active_category_names
+from app.services.transactions import build_household_context, format_context_for_prompt
 
 log = logging.getLogger("transaction_parser")
 
@@ -25,32 +25,49 @@ Devolvé JSON con estos campos:
 - "description": descripción corta y útil (ej: "Supermercado Carrefour", "Sueldo enero", "Nafta YPF")
 - "category": clasificá el gasto/ingreso (ver lista más abajo)
 - "transaction_date": fecha en formato YYYY-MM-DD si se menciona o aparece en el ticket; null si no
-- "account_hint": texto libre identificando la cuenta/medio si se menciona (ej "efectivo", "BBVA", "Visa", "transferencia"); null si no
+- "account_hint": nombre exacto de UNA cuenta de la lista de abajo si se menciona; null si no se menciona o no matchea
+- "family_member_hint": nombre exacto de UN miembro de la familia (ver lista) si se menciona; null si no
 - "confidence": "high", "medium", "low" — qué tan seguro estás de la extracción
 
 Reglas:
 - "income" si dice "cobré", "me pagaron", "ingresó", "depósito recibido", "sueldo", "transferencia recibida"
 - "expense" por defecto (compras, servicios, comida, transporte, etc.)
 - Si el mensaje NO parece una transacción (saludo, pregunta, basura), devolvé "kind": null y "confidence": "low"
-- En tickets/fotos: usá el TOTAL del ticket, no items individuales"""
+- En tickets/fotos: usá el TOTAL del ticket, no items individuales
+- Si el gasto coincide con un GASTO RECURRENTE conocido (mismo nombre + monto + día cercano), bajá la confidence a "low" — probablemente ya quedó registrado automáticamente"""
 
-# Base schema; the "category" enum is filled in per-call from the DB.
+# Base schema; the "category" / "account_hint" / "family_member_hint" enums
+# are filled in per-call from the DB so Gemini only emits real, resolvable values.
 BASE_PROPERTIES = {
     "kind": {"type": "string", "enum": ["expense", "income"], "nullable": True},
     "amount": {"type": "number", "nullable": True},
     "description": {"type": "string", "nullable": True},
     "transaction_date": {"type": "string", "nullable": True},
-    "account_hint": {"type": "string", "nullable": True},
     "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
 }
 
 
-def _build_schema(categories: list[str]) -> dict:
+def _build_schema(
+    categories: list[str],
+    accounts: list[str] | None = None,
+    members: list[str] | None = None,
+) -> dict:
     props = dict(BASE_PROPERTIES)
     cat = {"type": "string", "nullable": True}
     if categories:
         cat["enum"] = categories  # constrain Gemini to real, resolvable names
     props["category"] = cat
+
+    acc = {"type": "string", "nullable": True}
+    if accounts:
+        acc["enum"] = accounts
+    props["account_hint"] = acc
+
+    mem = {"type": "string", "nullable": True}
+    if members:
+        mem["enum"] = members
+    props["family_member_hint"] = mem
+
     return {
         "type": "object",
         "properties": props,
@@ -65,22 +82,28 @@ async def parse_transaction(
     text: str | None = None,
     media_bytes: bytes | None = None,
     media_mime: str | None = None,
-    categories: list[str] | None = None,
+    household_context: dict | None = None,
 ) -> dict | None:
     """Parse one message into a transaction.
 
     Exactly one of (text, media_bytes) should be provided. If media_bytes is given,
     media_mime is required (e.g. 'image/jpeg', 'audio/ogg').
     If both text and media are given, text is treated as a caption.
-    `categories` constrains the category field; fetched from the DB if omitted.
+    `household_context` constrains categories/accounts/members to real values
+    and is injected as text in the prompt so Gemini can match recurring charges
+    and route to the right account/member. Fetched from DB if omitted.
     """
-    if categories is None:
-        categories = await active_category_names()
+    if household_context is None:
+        household_context = await build_household_context()
+    categories = household_context.get("categories", [])
+    accounts = [a["name"] for a in household_context.get("accounts", [])]
+    members = [m["name"] for m in household_context.get("members", [])]
 
     parts: list[dict] = [{"text": PROMPT}]
     if categories:
         parts.append({"text": "\n\nLista de categorías válidas (elegí UNA exacta, o null si "
                               "ninguna aplica claramente):\n- " + "\n- ".join(categories)})
+    parts.append({"text": "\n\n" + format_context_for_prompt(household_context)})
 
     if text:
         parts.append({"text": f"\n\nMensaje del usuario:\n{text}"})
@@ -97,7 +120,7 @@ async def parse_transaction(
 
     result = await gemini.generate(
         parts=parts,
-        response_schema=_build_schema(categories),
+        response_schema=_build_schema(categories, accounts, members),
         temperature=0.2,
         max_output_tokens=500,
     )

@@ -30,11 +30,13 @@ services:
       # Live-mount the chat UI so HTML/CSS/JS edits don't require a rebuild.
       - ./chat:/code/chat:ro
     environment:
-      DATABASE_URL: postgresql+asyncpg://household:${POSTGRES_PASSWORD:-household123}@postgres:5432/household
+      DATABASE_URL: postgresql+asyncpg://household:${POSTGRES_PASSWORD:-household123}@household_db:5432/household
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_BUSINESS_ACCOUNT_ID: ${WHATSAPP_BUSINESS_ACCOUNT_ID:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       MCP_URL: http://household_mcp:8000/mcp
     depends_on:
@@ -54,7 +56,7 @@ services:
     container_name: household_mcp
     command: python -m app.mcp_server
     environment:
-      DATABASE_URL: postgresql+asyncpg://household:${POSTGRES_PASSWORD:-household123}@postgres:5432/household
+      DATABASE_URL: postgresql+asyncpg://household:${POSTGRES_PASSWORD:-household123}@household_db:5432/household
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,7 +76,7 @@ services:
       - ./web/app:/code/app:ro
     environment:
       # Plain postgresql:// DSN — asyncpg, not the server's +asyncpg form.
-      DATABASE_URL: postgresql://household:${POSTGRES_PASSWORD:-household123}@postgres:5432/household
+      DATABASE_URL: postgresql://household:${POSTGRES_PASSWORD:-household123}@household_db:5432/household
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,7 +101,7 @@ networks:
   # Pre-existing network the Cloudflare tunnel container lives on; we attach
   # household_api here so the tunnel can reach it via Docker DNS (household_api:8080).
   tunnel:
-    name: ollama-vision-bench_default
+    name: home-assistant_default
     external: true
 
 volumes:

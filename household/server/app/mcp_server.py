@@ -56,10 +56,16 @@ async def add_expense(
     description: str,
     category: str | None = None,
     transaction_date: str | None = None,
+    account_hint: str | None = None,
+    family_member_hint: str | None = None,
 ) -> dict:
     """Registra UN gasto. amount > 0 (EUR). description: texto corto.
     category: nombre de una categoría existente (si ninguna aplica, queda
-    'Sin categoría'). transaction_date: YYYY-MM-DD (por defecto hoy)."""
+    'Sin categoría'). transaction_date: YYYY-MM-DD (por defecto hoy).
+    account_hint: nombre (o substring) de la cuenta a usar — ej 'Visa',
+    'efectivo'. Si no matchea, cae en la cuenta default.
+    family_member_hint: nombre del miembro al que se asigna el gasto.
+    Si no matchea, cae en el miembro default."""
     tx_id = await create_transaction(
         kind="expense",
         amount=amount,
@@ -67,6 +73,8 @@ async def add_expense(
         category=category,
         transaction_date=transaction_date,
         source="manual",
+        account_hint=account_hint,
+        family_member_hint=family_member_hint,
     )
     if tx_id is None:
         return {"ok": False, "error": "no se pudo registrar (revisá el monto)"}
@@ -79,11 +87,15 @@ async def add_income(
     description: str,
     category: str | None = None,
     transaction_date: str | None = None,
+    account_hint: str | None = None,
+    family_member_hint: str | None = None,
 ) -> dict:
     """Registra UN ingreso (sueldo, transferencia recibida, etc.). amount > 0
     (EUR). description: texto corto. category: nombre de una categoría
     existente (si ninguna aplica, queda 'Sin categoría'). transaction_date:
-    YYYY-MM-DD (por defecto hoy)."""
+    YYYY-MM-DD (por defecto hoy).
+    account_hint: nombre (o substring) de la cuenta a usar.
+    family_member_hint: nombre del miembro al que se asigna el ingreso."""
     tx_id = await create_transaction(
         kind="income",
         amount=amount,
@@ -91,6 +103,8 @@ async def add_income(
         category=category,
         transaction_date=transaction_date,
         source="manual",
+        account_hint=account_hint,
+        family_member_hint=family_member_hint,
     )
     if tx_id is None:
         return {"ok": False, "error": "no se pudo registrar (revisá el monto)"}

@@ -21,7 +21,12 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from app.database import AsyncSessionLocal
 from app.models import AgentRun
-from app.services.transactions import active_category_names, recent_expenses
+from app.services.transactions import (
+    active_category_names,
+    build_household_context,
+    format_context_for_prompt,
+    recent_expenses,
+)
 
 log = logging.getLogger("agent")
 
@@ -37,13 +42,21 @@ MODELS = [
 ]
 
 
-def _is_quota_error(exc: BaseException) -> bool:
+# 5xx codes worth retrying on a different model: high demand on this one
+# usually doesn't correlate across model versions, so rotating gets us a
+# fast recovery instead of a hard error to the user.
+_RETRIABLE_CODES = {429, 500, 502, 503, 504}
+
+
+def _is_retriable_error(exc: BaseException) -> bool:
     """True if exc (or any sub-exception, since the SDK's tool loop wraps
-    errors in an ExceptionGroup) is a 429 / RESOURCE_EXHAUSTED."""
-    if isinstance(exc, genai_errors.ClientError):
-        return getattr(exc, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(exc)
+    errors in an ExceptionGroup) is one we should retry on the next model:
+    429 RESOURCE_EXHAUSTED (daily quota) or 5xx UNAVAILABLE/INTERNAL (the
+    model is briefly overloaded — sibling models often answer fine)."""
+    if isinstance(exc, (genai_errors.ClientError, genai_errors.ServerError)):
+        return getattr(exc, "code", None) in _RETRIABLE_CODES or "RESOURCE_EXHAUSTED" in str(exc)
     if isinstance(exc, BaseExceptionGroup):
-        return any(_is_quota_error(sub) for sub in exc.exceptions)
+        return any(_is_retriable_error(sub) for sub in exc.exceptions)
     return False
 
 # In-memory conversation history per session_id, so a follow-up ("sí, guardalo
@@ -82,11 +95,24 @@ SYSTEM_TMPL = (
     "algo es ambiguo (no se entiende el monto o qué es), si parece un duplicado de la lista (decile "
     "la fecha y el monto del parecido), o si dudás de si lo querían registrar. En esos casos proponé "
     "y esperá; no escribas hasta que confirmen.\n"
-    "- Si la persona confirma algo que veníamos hablando ('sí', 'dale', 'guardalo igual'), hacelo.\n\n"
+    "- Si la persona confirma algo que veníamos hablando ('sí', 'dale', 'guardalo igual'), hacelo.\n"
+    "- Si la persona menciona una cuenta o miembro de la familia (ver contexto abajo), pasalo "
+    "como account_hint / family_member_hint en add_expense/add_income usando el nombre exacto.\n\n"
     "Categorías válidas: {categories}. Si ninguna aplica claramente, no mandes categoría "
     "(queda 'Sin categoría').\n\n"
+    "{household_context}\n"
+    "{sender_line}\n"
     "Últimos gastos registrados (más nuevo primero):\n{recent}\n\n"
     "Respondé siempre en español, breve."
+)
+
+# Used by run_agent when sender_name is provided (authenticated channel like
+# Telegram). Tells the agent whose mouth the message is coming from so it can
+# auto-fill family_member_hint without needing the person to name themselves.
+SENDER_LINE_TMPL = (
+    "Quien manda este mensaje es {name}. Salvo que se mencione explícitamente "
+    "otro miembro, registrá los gastos a nombre de {name} (pasá '{name}' como "
+    "family_member_hint en add_expense / add_income)."
 )
 
 
@@ -193,23 +219,31 @@ async def run_agent(
     session_id: str | None = None,
     media: bytes | None = None,
     media_mime: str | None = None,
+    sender_name: str | None = None,
 ) -> str:
-    """Run one user message through the expense-registrar loop.
+    """Run one user message through the registrar agent loop.
 
     `message` is the text (a caption when media is present). `media`/`media_mime`
     carry a receipt photo or voice note the model reads directly.
+    `sender_name` is the authenticated family member name (e.g. resolved from a
+    Telegram user id); injected into the system prompt so the agent attributes
+    the expense to them by default.
 
     If session_id is given, prior text turns for that session are replayed so
     follow-ups ("sí, guardalo igual") are understood. Returns the reply text.
     """
-    categories = await active_category_names()
+    ctx = await build_household_context()
+    categories = ctx.get("categories", [])
     recent = await recent_expenses(limit=20)
     today = date.today()
+    sender_line = SENDER_LINE_TMPL.format(name=sender_name) if sender_name else ""
     system = SYSTEM_TMPL.format(
         categories=", ".join(categories) or "(ninguna)",
         today=today.isoformat(),
         year=today.year,
         recent=_format_recent(recent),
+        household_context=format_context_for_prompt(ctx),
+        sender_line=sender_line,
     )
 
     history = _SESSIONS.get(session_id, []) if session_id else []
@@ -235,8 +269,8 @@ async def run_agent(
                         model_used = model
                         break
                     except BaseException as exc:  # noqa: BLE001 - inspected below
-                        if _is_quota_error(exc):
-                            log.warning("model %s quota exhausted, rotating", model)
+                        if _is_retriable_error(exc):
+                            log.warning("model %s unavailable (quota or 5xx), rotating", model)
                             last_err = exc
                             continue
                         raise
