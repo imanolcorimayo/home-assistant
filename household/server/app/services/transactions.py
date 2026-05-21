@@ -6,6 +6,7 @@ a wa_id column on family_member or a fuzzy match on account.name.
 """
 
 import logging
+import uuid
 from datetime import date as date_cls
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -47,22 +48,25 @@ async def active_category_names() -> list[str]:
         return list(rows)
 
 
-async def recent_expenses(
-    limit: int = 20, days: int = 90, term: Optional[str] = None
+async def recent_transactions(
+    limit: int = 20, days: int = 90, term: Optional[str] = None, kind: Optional[str] = None
 ) -> list[dict]:
-    """Recent (non-deleted) expenses, newest first.
+    """Recent (non-deleted) transactions, newest first.
 
-    Backs two callers: the agent pre-feeds this into its prompt so it can judge
-    duplicates and categories without a tool round-trip, and the MCP
-    look_up_expenses tool reuses it as a fallback (with a search term).
+    kind: 'expense', 'income', or None for both. Backs the agent's pre-fed list
+    (expenses only) and the look_up_transactions tool (any kind).
+
+    Each row carries `kind` and `recurring_charge_id` (set when the row is a
+    recurring payment), so income and recurring charges are visible too.
     """
     since = date_cls.today() - timedelta(days=max(days, 1))
     async with AsyncSessionLocal() as session:
         q = select(Transaction).where(
             Transaction.deleted_ts.is_(None),
-            Transaction.kind == TransactionKind.expense,
             Transaction.transaction_date >= since,
         )
+        if kind in ("expense", "income"):
+            q = q.where(Transaction.kind == TransactionKind(kind))
         if term:
             like = f"%{term.strip()}%"
             q = q.where(or_(Transaction.description.ilike(like), Transaction.category.ilike(like)))
@@ -70,14 +74,29 @@ async def recent_expenses(
         rows = (await session.scalars(q)).all()
         return [
             {
+                # id lets the agent target a row with edit_expense; the pre-fed
+                # prompt list drops it (see _format_recent), look_up keeps it.
+                "id": str(t.transaction_id),
+                "kind": t.kind.value,
                 "date": str(t.transaction_date),
                 "amount": float(t.amount),
                 "currency": t.currency,
                 "category": t.category,
                 "description": t.description,
+                "recurring_charge_id": (
+                    str(t.recurring_charge_id) if t.recurring_charge_id else None
+                ),
             }
             for t in rows
         ]
+
+
+async def recent_expenses(
+    limit: int = 20, days: int = 90, term: Optional[str] = None
+) -> list[dict]:
+    """Recent expenses only — what the agent pre-feeds into its prompt to judge
+    duplicates/categories. Thin wrapper over recent_transactions(kind='expense')."""
+    return await recent_transactions(limit=limit, days=days, term=term, kind="expense")
 
 
 async def _resolve_category(session: AsyncSession, name: Optional[str]) -> tuple[str, Optional[object]]:
@@ -249,4 +268,56 @@ async def create_transaction(
             return None
 
         log.info("created transaction id=%s kind=%s amount=%s", tx.transaction_id, kind, amt)
+        return str(tx.transaction_id)
+
+
+async def update_transaction(
+    transaction_id: str,
+    amount=None,
+    description: Optional[str] = None,
+    category: Optional[str] = None,
+    transaction_date: Optional[str] = None,
+) -> Optional[str]:
+    """Patch an existing (non-deleted) transaction by id (used by the MCP
+    edit_expense tool). Only the fields passed are touched. Returns the
+    transaction_id on success, None if the row is missing/deleted or a value
+    is invalid."""
+    try:
+        tid = uuid.UUID(str(transaction_id))
+    except (ValueError, TypeError, AttributeError):
+        log.info("update_transaction: bad id=%r", transaction_id)
+        return None
+
+    async with AsyncSessionLocal() as session:
+        tx = await session.get(Transaction, tid)
+        if tx is None or tx.deleted_ts is not None:
+            log.info("update_transaction: not found/deleted id=%s", transaction_id)
+            return None
+
+        if amount is not None:
+            amt = _parse_amount(amount)
+            if amt is None:
+                log.info("update_transaction: bad amount=%r", amount)
+                return None
+            tx.amount = amt
+        if description is not None:
+            tx.description = description
+        if category is not None:
+            tx.category, tx.category_id = await _resolve_category(session, category)
+        if transaction_date is not None:
+            d = _parse_date(transaction_date)
+            if d is None:
+                log.info("update_transaction: bad date=%r", transaction_date)
+                return None
+            tx.transaction_date = d
+            tx.value_date = d
+
+        try:
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            log.exception("update_transaction failed: %s", exc)
+            return None
+
+        log.info("updated transaction id=%s", tx.transaction_id)
         return str(tx.transaction_id)

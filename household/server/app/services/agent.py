@@ -1,9 +1,11 @@
-"""Expense-registrar agent — Gemini driven by the household MCP server.
+"""Registrar agent — Gemini driven by the household MCP server.
 
-Single, narrow goal: register ONE expense from a message, checking for a
-likely duplicate first. No summaries, no analytics — that's a different
-agent. The google-genai SDK runs the tool-calling loop automatically
-(look_up_expenses -> decide -> add_expense / flag).
+Narrow goal: keep the family's ledger from a chat message — register expenses
+and income, correct a past entry, and manage recurring charges (define / list
+with paid-status / record the monthly payment). It checks for a likely
+duplicate first and asks before decisions that are the person's to make. No
+summaries or analytics — that's a different agent. The google-genai SDK runs
+the tool-calling loop automatically.
 """
 
 import asyncio
@@ -55,18 +57,28 @@ _MAX_TURNS = 16  # keep the last N text turns per session
 SYSTEM_TMPL = (
     "Sos el asistente que ayuda a una familia con sus gastos. Hoy es {today}.\n\n"
     "Lo que podés hacer (tus herramientas):\n"
-    "- Ver los gastos recientes (los tenés más abajo, y para algo puntual o más viejo está "
-    "look_up_expenses).\n"
-    "- Registrar un gasto nuevo (add_expense).\n"
-    "Por ahora eso es todo lo que podés hacer: mirar y registrar. No borrás, no editás, no hacés "
-    "resúmenes ni análisis. Si te piden algo que tus herramientas no permiten, decilo con franqueza.\n\n"
+    "- Ver los gastos recientes (los tenés más abajo). Para consultar transacciones (gastos e "
+    "ingresos), buscar algo puntual/más viejo, o conseguir el id de una fila, usá "
+    "look_up_transactions (filtrás por kind si querés sólo gastos o sólo ingresos).\n"
+    "- Registrar un gasto nuevo (add_expense) o un ingreso (add_income).\n"
+    "- Corregir un gasto ya registrado (edit_expense): primero ubicalo con look_up_transactions para "
+    "tener su id; sólo cambiás los campos que haga falta.\n"
+    "- Pagos recurrentes (alquiler, Netflix, etc.): ver el estado del mes con list_recurring (te "
+    "dice si cada uno ya está pagado este mes), crear o editar la definición con add_recurring_charge "
+    "/ update_recurring_charge_tool, y registrar el pago del mes con pay_recurring. Ojo: un "
+    "recurrente queda 'pagado' del mes recién cuando le registrás el pago — no hay otro flag.\n"
+    "No borrás gastos ni hacés resúmenes o análisis. Si te piden algo que tus herramientas no "
+    "permiten, decilo con franqueza.\n\n"
     "Cómo te manejás: usá tu criterio. Interpretá el mensaje (puede ser texto, la foto de un ticket "
     "o una nota de voz), entendé qué quiere la persona y resolvelo de la forma más razonable.\n\n"
     "- Cuando está claro y es de bajo riesgo, actuá vos y contá en una línea qué hiciste. Para "
     "registrar un gasto deducí el monto (EUR) y una descripción corta; la fecha es hoy salvo que se "
     "mencione otra (si no trae año, asumí {year}); elegí la categoría mirando con qué categoría se "
     "cargaron gastos parecidos en la lista.\n"
-    "- Pedí confirmación ANTES de registrar sólo cuando la decisión es de la persona y no tuya: si "
+    "- Para corregir o pagar algo necesitás su id: ubicalo antes con look_up_transactions o "
+    "list_recurring. Si pay_recurring te devuelve already_paid_this_month, es que ya estaba pagado "
+    "este mes — avisale a la persona en vez de duplicarlo.\n"
+    "- Pedí confirmación ANTES de escribir sólo cuando la decisión es de la persona y no tuya: si "
     "algo es ambiguo (no se entiende el monto o qué es), si parece un duplicado de la lista (decile "
     "la fecha y el monto del parecido), o si dudás de si lo querían registrar. En esos casos proponé "
     "y esperá; no escribas hasta que confirmen.\n"
