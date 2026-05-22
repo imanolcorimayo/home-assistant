@@ -18,6 +18,10 @@ from app.services.recurring import (
     update_recurring_charge,
 )
 from app.services.transactions import (
+    create_account as create_account_svc,
+    create_budget as create_budget_svc,
+    create_category as create_category_svc,
+    create_member as create_member_svc,
     create_transaction,
     recent_transactions,
     update_transaction,
@@ -204,6 +208,58 @@ async def pay_recurring(
         recurring_charge_id=recurring_charge_id,
         transaction_date=transaction_date,
         amount=amount,
+    )
+
+
+@mcp.tool()
+async def create_category(name: str, grupo: str | None = None) -> dict:
+    """Crea una categoría nueva (estructura del hogar, NO un gasto). name: el
+    nombre (ej 'Mascotas'). grupo (opcional): 'variable', 'fijo' o 'ingreso',
+    para agrupar en los análisis. Es idempotente: si ya existe una con ese
+    nombre, te la devuelve sin duplicar (created=false). Confirmá con la
+    persona antes de crear categorías nuevas."""
+    return await create_category_svc(name=name, grupo=grupo)
+
+
+@mcp.tool()
+async def create_budget(category: str, limit_amount: float) -> dict:
+    """Define (o actualiza) el presupuesto mensual de una categoría.
+    category: nombre de la categoría. limit_amount > 0 (EUR). Si ya había un
+    presupuesto para esa categoría, se actualiza el límite (created=false).
+    Conviene que la categoría exista; confirmá el monto con la persona."""
+    return await create_budget_svc(category=category, limit_amount=limit_amount)
+
+
+@mcp.tool()
+async def create_member(full_name: str) -> dict:
+    """Crea un miembro de la familia. full_name: nombre completo. Idempotente
+    por nombre. OJO: los miembros casi nunca cambian — NO inventes ni crees
+    miembros por tu cuenta; hacelo sólo si la persona lo pide explícitamente y
+    confirmá antes."""
+    return await create_member_svc(full_name=full_name)
+
+
+@mcp.tool()
+async def create_account(
+    name: str,
+    kind: str,
+    family_member_hint: str | None = None,
+    currency: str = "EUR",
+    initial_balance: float = 0,
+) -> dict:
+    """Crea una cuenta (ej 'Fer Efectivo'). name: nombre de la cuenta.
+    kind: 'checking' (banco), 'savings' (ahorro), 'cash' (efectivo) o
+    'credit_card' (tarjeta de crédito). family_member_hint (opcional): nombre
+    del miembro dueño; si no matchea, queda compartida. currency por defecto
+    EUR. initial_balance opcional. OJO: las cuentas casi nunca cambian — NO las
+    inventes; creá una sólo si la persona lo pide explícitamente y confirmá
+    antes (nombre y tipo)."""
+    return await create_account_svc(
+        name=name,
+        kind=kind,
+        family_member_hint=family_member_hint,
+        currency=currency,
+        initial_balance=initial_balance,
     )
 
 

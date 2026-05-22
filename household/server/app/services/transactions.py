@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
 from app.models import (
     Account,
+    AccountKind,
     Category,
     FamilyMember,
     MonthlyBudget,
@@ -477,3 +478,146 @@ async def update_transaction(
 
         log.info("updated transaction id=%s", tx.transaction_id)
         return str(tx.transaction_id)
+
+
+# ── Household-structure creation ──────────────────────────────────────────
+# Backs the agent's create_category / create_budget / create_member /
+# create_account tools (issue #21, "sugerir y crear nuevos valores"). These
+# mirror the web/ Ajustes write routes so chat and web stay in sync. The agent
+# is told (system prompt) to confirm before creating structure — categories /
+# budgets are routine, accounts / members rarely change.
+
+_VALID_GRUPOS = {"variable", "fijo", "ingreso"}
+
+
+async def create_category(name: str, grupo: Optional[str] = None) -> dict:
+    """Create a category. Idempotent on name (case-insensitive): an existing
+    one is returned as-is rather than duplicated. grupo, when given, must be
+    one of variable/fijo/ingreso. Returns {"ok", "name", "created"} or error."""
+    clean = (name or "").strip()
+    if not clean:
+        return {"ok": False, "error": "el nombre no puede estar vacío"}
+    g = (grupo or "").strip().lower() or None
+    if g is not None and g not in _VALID_GRUPOS:
+        return {"ok": False, "error": "grupo debe ser variable, fijo o ingreso"}
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(Category).where(func.lower(Category.name) == clean.lower())
+        )
+        if existing is not None:
+            return {"ok": True, "name": existing.name, "created": False}
+        cat = Category(name=clean, grupo=g)
+        session.add(cat)
+        try:
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            log.exception("create_category failed: %s", exc)
+            return {"ok": False, "error": "no se pudo crear la categoría"}
+        log.info("created category name=%r grupo=%r", clean, g)
+        return {"ok": True, "name": cat.name, "created": True}
+
+
+async def create_budget(category: str, limit_amount) -> dict:
+    """Set a monthly budget for a category (monthly_budget.subcategory_1 is
+    unique). If one already exists for that category, its limit is updated.
+    limit_amount > 0 (EUR). Returns {"ok", "category", "limit", "created"}."""
+    clean = (category or "").strip()
+    if not clean:
+        return {"ok": False, "error": "la categoría no puede estar vacía"}
+    amt = _parse_amount(limit_amount)
+    if amt is None:
+        return {"ok": False, "error": "límite inválido (debe ser > 0)"}
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(MonthlyBudget).where(MonthlyBudget.subcategory_1 == clean)
+        )
+        created = existing is None
+        if existing is not None:
+            existing.limit_amount = amt
+        else:
+            session.add(MonthlyBudget(subcategory_1=clean, limit_amount=amt))
+        try:
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            log.exception("create_budget failed: %s", exc)
+            return {"ok": False, "error": "no se pudo guardar el presupuesto"}
+        log.info("set budget category=%r limit=%s created=%s", clean, amt, created)
+        return {"ok": True, "category": clean, "limit": float(amt), "created": created}
+
+
+async def create_member(full_name: str) -> dict:
+    """Create a family member. Idempotent on name (case-insensitive). Returns
+    {"ok", "name", "created"} or error."""
+    clean = (full_name or "").strip()
+    if not clean:
+        return {"ok": False, "error": "el nombre no puede estar vacío"}
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(FamilyMember).where(func.lower(FamilyMember.full_name) == clean.lower())
+        )
+        if existing is not None:
+            return {"ok": True, "name": existing.full_name, "created": False}
+        m = FamilyMember(full_name=clean)
+        session.add(m)
+        try:
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            log.exception("create_member failed: %s", exc)
+            return {"ok": False, "error": "no se pudo crear el miembro"}
+        log.info("created family_member name=%r", clean)
+        return {"ok": True, "name": m.full_name, "created": True}
+
+
+async def create_account(
+    name: str,
+    kind: str,
+    family_member_hint: Optional[str] = None,
+    currency: str = "EUR",
+    initial_balance=0,
+) -> dict:
+    """Create an account. kind must be one of checking/savings/cash/credit_card.
+    family_member_hint (optional) ties it to a member by name; if it doesn't
+    match, the account is shared (no owner). Returns {"ok", "account_id",
+    "name", "created"} or error."""
+    clean = (name or "").strip()
+    if not clean:
+        return {"ok": False, "error": "el nombre no puede estar vacío"}
+    try:
+        account_kind = AccountKind((kind or "").strip().lower())
+    except ValueError:
+        return {"ok": False, "error": "kind debe ser checking, savings, cash o credit_card"}
+    bal = _parse_amount(initial_balance) if str(initial_balance).strip() not in ("", "0") else Decimal("0")
+    if bal is None:
+        return {"ok": False, "error": "balance inicial inválido"}
+
+    async with AsyncSessionLocal() as session:
+        existing = await session.scalar(
+            select(Account).where(func.lower(Account.name) == clean.lower(), Account.is_active)
+        )
+        if existing is not None:
+            return {"ok": True, "account_id": str(existing.account_id),
+                    "name": existing.name, "created": False}
+        member_id = await resolve_member_hint(session, family_member_hint)
+        acc = Account(
+            name=clean,
+            kind=account_kind,
+            currency=(currency or "EUR").strip().upper()[:3] or "EUR",
+            initial_balance=bal,
+            family_member_id=member_id,
+        )
+        session.add(acc)
+        try:
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            log.exception("create_account failed: %s", exc)
+            return {"ok": False, "error": "no se pudo crear la cuenta"}
+        log.info("created account name=%r kind=%s owner_id=%s", clean, account_kind.value,
+                 member_id)
+        return {"ok": True, "account_id": str(acc.account_id), "name": acc.name, "created": True}
