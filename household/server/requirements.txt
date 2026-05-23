@@ -6,3 +6,4 @@ httpx==0.28.1
 python-multipart==0.0.12
 google-genai==2.4.0
 mcp==1.12.4
+apscheduler==3.10.4

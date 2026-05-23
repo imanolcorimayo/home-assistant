@@ -21,6 +21,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Integer,
     Numeric,
@@ -62,6 +63,10 @@ class FamilyMember(Base):
     )
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     telegram_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, nullable=True)
+    # Captured at /start in any of the Telegram bots; lets the Observer send
+    # proactive messages without needing a webhook payload. In 1-to-1 chats
+    # it equals telegram_user_id but is stored explicitly for future-proofing.
+    telegram_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     created_ts: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_ts: Mapped[Optional[datetime]] = mapped_column(nullable=True)
@@ -224,3 +229,50 @@ class Transaction(Base):
 
     account: Mapped[Account] = relationship(back_populates="transactions")
     family_member: Mapped[FamilyMember] = relationship(back_populates="transactions")
+
+
+class Notification(Base):
+    """Outbox for proactive Telegram messages sent by the Observer agent.
+
+    Generators write rows with a dedupe_key; the dispatcher reads pending
+    rows (sent_ts IS NULL) and ships them via the Observer bot. The
+    related_entity_* fields are polymorphic on purpose — no FK constraint,
+    so a deleted recurring_charge doesn't cascade-nuke its own alerts."""
+
+    __tablename__ = "notification"
+
+    notification_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    target_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    # TIMESTAMPTZ — the generators write timezone-aware datetimes.
+    scheduled_ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    sent_ts: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    related_entity_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    related_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    dedupe_key: Mapped[Optional[str]] = mapped_column(Text, unique=True, nullable=True)
+    created_ts: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class NotificationPreference(Base):
+    """Per-member opt-out by notification kind. Default TRUE for every kind
+    seeded in migrations/006_notifications.sql for any bound member."""
+
+    __tablename__ = "notification_preference"
+
+    notification_preference_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    family_member_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_member.family_member_id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_ts: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_ts: Mapped[Optional[datetime]] = mapped_column(nullable=True)
