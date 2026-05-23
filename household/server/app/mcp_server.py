@@ -1,16 +1,20 @@
-"""Household MCP server — expense-registration tools (internal only).
+"""Household MCP server — tools for both household agents (internal only).
 
-Scope: the registrar agent and nothing else. Thin tools over streamable-http:
-look up / add / edit expenses, add income, and manage recurring charges
-(define, edit, list with paid-status, register the monthly payment). Run as
-its own process (`python -m app.mcp_server`); reachable at
-http://household_mcp:8000/mcp on the docker network. Never tunneled.
+Scope: the registrar agent (writes) AND the consultor agent (reads). Thin
+tools over streamable-http: look up / add / edit expenses, add income, manage
+recurring charges, plus a battery of read-only analytics. Each agent's
+SYSTEM_TMPL declares which tools it uses; the SDK exposes all of them, but
+the agent only invokes the ones its prompt names. Run as its own process
+(`python -m app.mcp_server`); reachable at http://household_mcp:8000/mcp on
+the docker network. Never tunneled.
 """
 
 import logging
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from app.services import analytics
 from app.services.recurring import (
     create_recurring_charge,
     list_recurring_charges,
@@ -260,6 +264,129 @@ async def create_account(
         family_member_hint=family_member_hint,
         currency=currency,
         initial_balance=initial_balance,
+    )
+
+
+# ============================================================
+# Analytics tools — read-only. Consumed by the Consultor agent.
+# ============================================================
+
+
+@mcp.tool()
+async def spending_by_period(
+    start: str,
+    end: str,
+    group_by: str = "category",
+    member_hint: Optional[str] = None,
+    account_hint: Optional[str] = None,
+) -> list[dict]:
+    """Suma de GASTOS entre start y end (formato YYYY-MM-DD), agrupados.
+    group_by: 'category' (default), 'member', 'account', 'day', 'week', 'month'.
+    member_hint / account_hint: filtran fuzzy a un miembro o cuenta puntual.
+    Devuelve filas {group, total, count} ordenadas por monto descendente."""
+    return await analytics.spending_by_period(
+        start, end, group_by, member_hint=member_hint, account_hint=account_hint
+    )
+
+
+@mcp.tool()
+async def income_by_period(
+    start: str,
+    end: str,
+    group_by: str = "category",
+    member_hint: Optional[str] = None,
+    account_hint: Optional[str] = None,
+) -> list[dict]:
+    """Suma de INGRESOS entre start y end (formato YYYY-MM-DD), agrupados.
+    Mismo shape y parámetros que spending_by_period pero kind='income'."""
+    return await analytics.income_by_period(
+        start, end, group_by, member_hint=member_hint, account_hint=account_hint
+    )
+
+
+@mcp.tool()
+async def balance_for_period(start: str, end: str) -> dict:
+    """Balance del período (YYYY-MM-DD): suma de ingresos, suma de gastos y
+    neto (income - expense). Útil para 'cómo viene el mes', 'balance del año'."""
+    return await analytics.balance_for_period(start, end)
+
+
+@mcp.tool()
+async def savings_rate(start: str, end: str) -> dict:
+    """Tasa de ahorro = (income - expense) / income * 100 en el período
+    (YYYY-MM-DD). rate_pct=None si no hubo ingresos."""
+    return await analytics.savings_rate(start, end)
+
+
+@mcp.tool()
+async def category_trend(category: str, months: int = 12) -> list[dict]:
+    """Serie mensual de gastos en UNA categoría — últimos N meses (incluido el
+    actual). Devuelve [{month: 'YYYY-MM', total, count}]. Útil para
+    'tendencia de transporte', 'cómo viene supermercado últimos 6 meses'."""
+    return await analytics.category_trend(category, months=months)
+
+
+@mcp.tool()
+async def top_categories(
+    start: str, end: str, kind: str = "expense", limit: int = 5
+) -> list[dict]:
+    """Top N categorías de gasto o ingreso en el período (YYYY-MM-DD).
+    kind: 'expense' o 'income'. limit acotado a [1, 50]."""
+    return await analytics.top_categories(start, end, kind=kind, limit=limit)
+
+
+@mcp.tool()
+async def period_comparison(
+    period_a_start: str,
+    period_a_end: str,
+    period_b_start: str,
+    period_b_end: str,
+    kind: str = "expense",
+) -> dict:
+    """Compara la suma total de gasto o ingreso entre dos períodos (YYYY-MM-DD).
+    Devuelve {a, b, diff: b-a, pct_change}. pct_change=None si a==0."""
+    return await analytics.period_comparison(
+        (period_a_start, period_a_end), (period_b_start, period_b_end), kind=kind
+    )
+
+
+@mcp.tool()
+async def budget_status(year_month: Optional[str] = None) -> list[dict]:
+    """Estado de cada presupuesto mensual: limit, spent, remaining, pct_used.
+    year_month en formato 'YYYY-MM' (default: mes actual). Útil para
+    'voy bien con el presupuesto', 'cuánto me queda de supermercado'."""
+    return await analytics.budget_status(year_month=year_month)
+
+
+@mcp.tool()
+async def pending_recurring(year_month: Optional[str] = None) -> list[dict]:
+    """Cargos recurrentes ACTIVOS que NO se pagaron en el mes pedido.
+    year_month: 'YYYY-MM' (default: mes actual). Devuelve [{name, amount,
+    day_of_month, category, due_in_days}]. due_in_days es negativo si ya
+    venció. Sólo útil en mes actual / pasado."""
+    return await analytics.pending_recurring(year_month=year_month)
+
+
+@mcp.tool()
+async def account_balances() -> list[dict]:
+    """Saldo actual de cada cuenta activa = saldo inicial + ingresos - gastos
+    (sólo movimientos vivos). Devuelve [{account, kind, currency, balance}]."""
+    return await analytics.account_balances()
+
+
+@mcp.tool()
+async def average_by_category(
+    kind: str = "expense",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    group_by: str = "month",
+) -> list[dict]:
+    """Promedio por categoría de gasto o ingreso. group_by='month' divide el
+    total por la cantidad de meses con actividad (no por meses calendario);
+    group_by='tx' es promedio por transacción. start/end opcionales en
+    YYYY-MM-DD; default últimos 12 meses."""
+    return await analytics.average_by_category(
+        kind=kind, start=start, end=end, group_by=group_by
     )
 
 

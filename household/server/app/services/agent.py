@@ -121,6 +121,128 @@ SENDER_LINE_TMPL = (
 )
 
 
+# Prompt for the analyst (Consultor) bot — separate identity from the
+# Registrador. Tools are NOT named verbatim here on purpose: the agent
+# discovers them from MCP. We only declare *capabilities* so it knows the
+# shape of questions it can answer, plus hard rules about not inventing data.
+CONSULTANT_SYSTEM_TMPL = (
+    "Sos el analista financiero de la familia. Tu trabajo es responder con "
+    "NÚMEROS y análisis CLAROS, sacados de las tools que tenés disponibles. "
+    "Hoy es {today}. Año actual: {year}.\n\n"
+    "Capacidades (qué tipo de preguntas podés contestar):\n"
+    "- Cuánto se gastó / cobró en un período, total o agrupado por categoría, "
+    "miembro, cuenta, día, semana o mes.\n"
+    "- Balance del período (ingresos - gastos) y tasa de ahorro.\n"
+    "- Tendencia mensual de una categoría puntual.\n"
+    "- Top N categorías (de gasto o ingreso) en un período.\n"
+    "- Comparación entre dos períodos (este mes vs el anterior, este año vs el "
+    "pasado, etc.) — devuelve diferencia absoluta y % de cambio.\n"
+    "- Estado de presupuestos en el mes (cuánto gastado vs límite).\n"
+    "- Recurrentes pendientes de pago del mes (alquiler, suscripciones, etc.).\n"
+    "- Saldos actuales de cada cuenta.\n"
+    "- Promedio mensual o por transacción de gasto / ingreso por categoría.\n\n"
+    "Cómo trabajás:\n"
+    "1. Convertí la pregunta en parámetros concretos (fechas YYYY-MM-DD, "
+    "kind, categoría exacta, etc.) usando el contexto familiar de abajo. "
+    "Si la persona dice 'este mes', traducí al rango real del mes actual. "
+    "Si dice un nombre de cuenta o miembro, usá el nombre exacto de la lista.\n"
+    "2. Llamá UNA o dos tools que respondan la pregunta. Combiná si hace "
+    "falta (ej: balance del mes + top categorías para 'cómo viene el mes').\n"
+    "3. Respondé profesional y breve. Para una pregunta puntual: número + "
+    "una línea de contexto (ej 'Gastaste 230 EUR este mes en Supermercado, "
+    "+12% vs el mes pasado'). Para un análisis: 2-4 bullets cortos con los "
+    "números más relevantes.\n\n"
+    "Reglas inviolables:\n"
+    "- NO inventes números. Si una tool te devuelve vacío, decí 'no hay datos "
+    "para ese período/filtro' en vez de improvisar.\n"
+    "- NO registrás, editás ni borrás transacciones — eso es trabajo del "
+    "Registrador. Si te piden registrar un gasto, decí: 'eso lo registra el "
+    "otro bot (Registrador); yo solo consulto'.\n"
+    "- NO inventes categorías ni cuentas ni miembros nuevos. Usá sólo los "
+    "que están en el contexto.\n"
+    "- Respondé siempre en español, con montos en EUR (o la moneda real de "
+    "la cuenta si es distinta) y porcentajes con 1 decimal.\n\n"
+    "{household_context}\n"
+    "{sender_line}"
+)
+
+
+async def run_consultant_agent(
+    message: str,
+    session_id: str | None = None,
+    sender_name: str | None = None,
+) -> str:
+    """Run one user question through the Consultor (analytics) loop.
+
+    Twin of `run_agent` but with a read-only prompt: the agent picks
+    analytics tools (spending_by_period, balance_for_period, etc.) instead
+    of write tools. Shares all the helpers (`_user_turn`, `_model_turn`,
+    `_log_run`, model rotation, MCP connection, `_SESSIONS`).
+
+    `sender_name` becomes the default member context (same idea as the
+    Registrador). `session_id` is keyed by the router as
+    'consultant:telegram:{chat_id}' so `agent_run` rows can be filtered
+    per agent without a schema change.
+    """
+    ctx = await build_household_context()
+    today = date.today()
+    sender_line = SENDER_LINE_TMPL.format(name=sender_name) if sender_name else ""
+    system = CONSULTANT_SYSTEM_TMPL.format(
+        today=today.isoformat(),
+        year=today.year,
+        household_context=format_context_for_prompt(ctx),
+        sender_line=sender_line,
+    )
+
+    history = _SESSIONS.get(session_id, []) if session_id else []
+    cur_turn = _user_turn(message)
+    contents = history + [cur_turn]
+
+    cfg = types.GenerateContentConfig(system_instruction=system, temperature=0.1)
+
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    resp = None
+    model_used: str | None = None
+    last_err: BaseException | None = None
+    try:
+        async with streamablehttp_client(MCP_URL) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                cfg.tools = [session]
+                for model in MODELS:
+                    try:
+                        resp = await client.aio.models.generate_content(
+                            model=model, contents=contents, config=cfg
+                        )
+                        model_used = model
+                        break
+                    except BaseException as exc:  # noqa: BLE001 - inspected below
+                        if _is_retriable_error(exc):
+                            log.warning("model %s unavailable (quota or 5xx), rotating", model)
+                            last_err = exc
+                            continue
+                        raise
+        if resp is None:
+            raise last_err or RuntimeError("no model produced a response")
+        reply = (resp.text or "").strip() or "(sin respuesta)"
+    except BaseException as exc:  # noqa: BLE001 - log the failed run, then re-raise
+        asyncio.create_task(
+            _log_run(session_id, message, None, model_used, [], str(exc))
+        )
+        raise
+
+    prompt_tok, output_tok, total_tok = _extract_usage(resp)
+    asyncio.create_task(
+        _log_run(session_id, message, reply, model_used, _extract_tool_calls(resp), None,
+                 prompt_tok, output_tok, total_tok)
+    )
+    if session_id:
+        _SESSIONS[session_id] = (
+            history + [_user_turn(message), _model_turn(reply)]
+        )[-_MAX_TURNS:]
+    return reply
+
+
 def _format_recent(rows: list[dict]) -> str:
     if not rows:
         return "(no hay gastos recientes)"
