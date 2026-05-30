@@ -52,22 +52,29 @@ async def active_category_names() -> list[str]:
 
 
 async def recent_transactions(
-    limit: int = 20, days: int = 90, term: Optional[str] = None, kind: Optional[str] = None
+    limit: int = 20,
+    days: int = 90,
+    term: Optional[str] = None,
+    kind: Optional[str] = None,
+    include_deleted: bool = False,
 ) -> list[dict]:
-    """Recent (non-deleted) transactions, newest first.
+    """Recent transactions, newest first.
 
     kind: 'expense', 'income', or None for both. Backs the agent's pre-fed list
     (expenses only) and the look_up_transactions tool (any kind).
 
-    Each row carries `kind` and `recurring_charge_id` (set when the row is a
-    recurring payment), so income and recurring charges are visible too.
+    include_deleted: if True, also returns soft-deleted rows (each is flagged
+    with `deleted=True` in the output). Used when the agent needs to restore
+    a deleted transaction.
+
+    Each row carries `kind`, `family_member` (full name), `deleted` flag, and
+    `recurring_charge_id` (set when the row is a recurring payment).
     """
     since = date_cls.today() - timedelta(days=max(days, 1))
     async with AsyncSessionLocal() as session:
-        q = select(Transaction).where(
-            Transaction.deleted_ts.is_(None),
-            Transaction.transaction_date >= since,
-        )
+        q = select(Transaction).where(Transaction.transaction_date >= since)
+        if not include_deleted:
+            q = q.where(Transaction.deleted_ts.is_(None))
         if kind in ("expense", "income"):
             q = q.where(Transaction.kind == TransactionKind(kind))
         if term:
@@ -75,6 +82,11 @@ async def recent_transactions(
             q = q.where(or_(Transaction.description.ilike(like), Transaction.category.ilike(like)))
         q = q.order_by(Transaction.transaction_date.desc()).limit(min(max(limit, 1), 50))
         rows = (await session.scalars(q)).all()
+        member_ids = {t.family_member_id for t in rows}
+        members = (await session.scalars(
+            select(FamilyMember).where(FamilyMember.family_member_id.in_(member_ids))
+        )).all() if member_ids else []
+        member_names = {m.family_member_id: m.full_name for m in members}
         return [
             {
                 # id lets the agent target a row with edit_expense; the pre-fed
@@ -86,6 +98,8 @@ async def recent_transactions(
                 "currency": t.currency,
                 "category": t.category,
                 "description": t.description,
+                "family_member": member_names.get(t.family_member_id),
+                "deleted": t.deleted_ts is not None,
                 "recurring_charge_id": (
                     str(t.recurring_charge_id) if t.recurring_charge_id else None
                 ),
@@ -478,6 +492,92 @@ async def update_transaction(
 
         log.info("updated transaction id=%s", tx.transaction_id)
         return str(tx.transaction_id)
+
+
+async def soft_delete_transaction(transaction_id: str) -> Optional[dict]:
+    """Mark a transaction as deleted (sets deleted_ts = now()).
+    The row stays in the table so it can be restored — every analytics
+    query filters `deleted_ts IS NULL`, so the gasto disappears from
+    reports but is recoverable.
+
+    Returns a dict with the transaction's snapshot at deletion time so the
+    agent can confirm exactly what got removed; None if the id is invalid,
+    not found, or was already deleted (idempotent: re-deleting is a no-op
+    that still returns None to surface the situation to the agent).
+    """
+    try:
+        tid = uuid.UUID(str(transaction_id))
+    except (ValueError, TypeError, AttributeError):
+        log.info("soft_delete_transaction: bad id=%r", transaction_id)
+        return None
+
+    async with AsyncSessionLocal() as session:
+        tx = await session.get(Transaction, tid)
+        if tx is None or tx.deleted_ts is not None:
+            log.info("soft_delete_transaction: not found/already deleted id=%s", transaction_id)
+            return None
+
+        member = await session.get(FamilyMember, tx.family_member_id)
+        snapshot = {
+            "transaction_id": str(tx.transaction_id),
+            "kind": tx.kind.value,
+            "amount": float(tx.amount),
+            "currency": tx.currency,
+            "category": tx.category,
+            "description": tx.description,
+            "transaction_date": tx.transaction_date.isoformat(),
+            "family_member": member.full_name if member else None,
+        }
+        tx.deleted_ts = func.now()
+        try:
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            log.exception("soft_delete_transaction failed: %s", exc)
+            return None
+
+        log.info("soft-deleted transaction id=%s", tx.transaction_id)
+        return snapshot
+
+
+async def restore_transaction(transaction_id: str) -> Optional[dict]:
+    """Undo a soft-delete: clear deleted_ts so the row re-enters reports.
+    Returns a snapshot dict on success; None if id invalid, not found, or
+    the row wasn't deleted to begin with.
+    """
+    try:
+        tid = uuid.UUID(str(transaction_id))
+    except (ValueError, TypeError, AttributeError):
+        log.info("restore_transaction: bad id=%r", transaction_id)
+        return None
+
+    async with AsyncSessionLocal() as session:
+        tx = await session.get(Transaction, tid)
+        if tx is None or tx.deleted_ts is None:
+            log.info("restore_transaction: not found/not deleted id=%s", transaction_id)
+            return None
+
+        member = await session.get(FamilyMember, tx.family_member_id)
+        snapshot = {
+            "transaction_id": str(tx.transaction_id),
+            "kind": tx.kind.value,
+            "amount": float(tx.amount),
+            "currency": tx.currency,
+            "category": tx.category,
+            "description": tx.description,
+            "transaction_date": tx.transaction_date.isoformat(),
+            "family_member": member.full_name if member else None,
+        }
+        tx.deleted_ts = None
+        try:
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            log.exception("restore_transaction failed: %s", exc)
+            return None
+
+        log.info("restored transaction id=%s", tx.transaction_id)
+        return snapshot
 
 
 # ── Household-structure creation ──────────────────────────────────────────

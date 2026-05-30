@@ -136,7 +136,7 @@ async def _handle_message(msg: dict) -> None:
         media_mime=media_mime,
         sender_name=member.full_name,
     )
-    await send_message(chat_id, reply or "(sin respuesta)")
+    await send_message(chat_id, reply or "(sin respuesta)", parse_mode="Markdown")
 
 
 async def _lookup_member(tg_user_id: int | None) -> FamilyMember | None:

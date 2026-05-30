@@ -28,6 +28,8 @@ from app.services.transactions import (
     create_member as create_member_svc,
     create_transaction,
     recent_transactions,
+    restore_transaction as restore_transaction_svc,
+    soft_delete_transaction,
     update_transaction,
 )
 
@@ -40,22 +42,32 @@ mcp = FastMCP("household", host="0.0.0.0", port=8000)
 
 @mcp.tool()
 async def look_up_transactions(
-    term: str | None = None, days: int = 90, limit: int = 15, kind: str | None = None
+    term: str | None = None,
+    days: int = 90,
+    limit: int = 15,
+    kind: str | None = None,
+    include_deleted: bool = False,
 ) -> list[dict]:
     """Consulta transacciones recientes, de la más nueva a la más vieja: sirve
     para detectar duplicados antes de registrar, ver con qué categoría se
-    cargaron cosas parecidas, y para conseguir el id de una fila (para
-    edit_expense).
+    cargaron cosas parecidas, conseguir el id de una fila (para edit_expense
+    o delete_transaction), y encontrar registros borrados (para restore).
 
     term: palabra a buscar en descripción o categoría (opcional).
     days: ventana hacia atrás en días (por defecto 90).
     limit: máximo de filas (máx 50).
     kind: 'expense' (gastos), 'income' (ingresos), o vacío para ambos.
+    include_deleted: si True, también devuelve registros borrados (con
+        deleted=True en la fila). Usalo cuando alguien quiera RESTAURAR
+        algo borrado — por defecto los borrados se ocultan.
 
-    Cada fila trae kind (income/expense) y recurring_charge_id (presente cuando
-    es el pago de un recurrente).
+    Cada fila trae kind (income/expense), family_member (a nombre de quién),
+    deleted (True/False), y recurring_charge_id (presente cuando es el pago
+    de un recurrente).
     """
-    return await recent_transactions(limit=limit, days=days, term=term, kind=kind)
+    return await recent_transactions(
+        limit=limit, days=days, term=term, kind=kind, include_deleted=include_deleted
+    )
 
 
 @mcp.tool()
@@ -140,6 +152,44 @@ async def edit_expense(
     if tx_id is None:
         return {"ok": False, "error": "no se pudo editar (id inexistente o dato inválido)"}
     return {"ok": True, "transaction_id": tx_id}
+
+
+@mcp.tool()
+async def delete_transaction(transaction_id: str) -> dict:
+    """Borra (soft-delete) una transacción YA registrada — gasto o ingreso.
+    El registro queda en la base con deleted_ts seteado, NO se pierde: todos
+    los reportes lo dejan de contar, pero puede recuperarse con
+    restore_transaction.
+
+    USO OBLIGATORIO: invocá esta tool SOLO después de que la persona haya
+    confirmado explícitamente qué eliminar. Antes de llamar, mostrale los
+    detalles (fecha, monto, descripción, categoría) y pedile un 'sí' o
+    'confirmo'. Nunca borres por inferencia ni por un mensaje ambiguo, ni
+    en lote sin confirmar cada uno.
+
+    Conseguí el transaction_id con look_up_transactions (cada fila trae el
+    suyo). Devuelve {ok, transaction} con el snapshot del registro borrado,
+    o {ok: False, error} si no se pudo (id inexistente o ya borrado).
+    """
+    snap = await soft_delete_transaction(transaction_id)
+    if snap is None:
+        return {"ok": False, "error": "no se pudo borrar (id inexistente o ya estaba borrado)"}
+    return {"ok": True, "transaction": snap}
+
+
+@mcp.tool()
+async def restore_transaction(transaction_id: str) -> dict:
+    """Recupera una transacción borrada (limpia deleted_ts). Útil cuando la
+    persona dice 'recuperá el último que borré' o se equivocó al borrar.
+
+    Conseguí el id de la transacción borrada con look_up_transactions
+    (acepta include_deleted=True). Devuelve {ok, transaction} con el
+    snapshot, o {ok: False, error} si no estaba borrada.
+    """
+    snap = await restore_transaction_svc(transaction_id)
+    if snap is None:
+        return {"ok": False, "error": "no se pudo recuperar (id inexistente o no estaba borrado)"}
+    return {"ok": True, "transaction": snap}
 
 
 @mcp.tool()

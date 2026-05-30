@@ -27,15 +27,31 @@ def _file_base(token: Optional[str] = None) -> str:
     return f"https://api.telegram.org/file/bot{_resolve_token(token)}"
 
 
-async def send_message(chat_id: int, text: str, token: Optional[str] = None) -> dict:
+async def send_message(
+    chat_id: int,
+    text: str,
+    token: Optional[str] = None,
+    parse_mode: Optional[str] = None,
+) -> dict:
     """POST sendMessage. Logs (but does not raise) on 4xx/5xx so the webhook
     handler can keep replying 200 to Telegram. `token` overrides the default
-    bot token when sending from a non-Registrador bot."""
+    bot token when sending from a non-Registrador bot.
+
+    `parse_mode`: 'Markdown' (legacy) or 'MarkdownV2'. If Telegram returns
+    400 (typically: malformed markdown such as a stray '*' or '_'), we retry
+    once WITHOUT parse_mode — better an unformatted message than no message.
+    """
+    payload: dict = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.post(
-            f"{_base(token)}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
-        )
+        r = await client.post(f"{_base(token)}/sendMessage", json=payload)
+        if r.status_code == 400 and parse_mode:
+            log.warning("send_message 400 with parse_mode=%s, retrying plain. "
+                        "chat=%s body=%r resp=%s",
+                        parse_mode, chat_id, text, r.text)
+            payload.pop("parse_mode", None)
+            r = await client.post(f"{_base(token)}/sendMessage", json=payload)
     if r.status_code >= 400:
         log.error("send_message %d chat=%s body=%r resp=%s",
                   r.status_code, chat_id, text, r.text)

@@ -127,7 +127,7 @@ async def _handle_message(msg: dict) -> None:
         registrar_session_id=f"telegram:{chat_id}",
         consultant_session_id=f"consultant:telegram:{chat_id}",
     )
-    await send_message(chat_id, reply or "(sin respuesta)", token=_token())
+    await send_message(chat_id, reply or "(sin respuesta)", token=_token(), parse_mode="Markdown")
 
 
 async def _lookup_member(tg_user_id: int | None) -> FamilyMember | None:
