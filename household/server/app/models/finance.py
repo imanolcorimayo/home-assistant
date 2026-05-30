@@ -176,6 +176,15 @@ class AgentRun(Base):
     prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # When the Director routes to a subagent, the subagent's run points back
+    # here. NULL for standalone runs (registrador/consultor invoked directly).
+    # Logically a self-FK to agent_run_id, but enforced via convention only —
+    # parent and child are persisted by two separate fire-and-forget tasks
+    # whose ordering is racy, so a hard FK would intermittently reject the
+    # child. The dashboard uses LEFT JOIN which is tolerant of misses.
+    parent_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     created_ts: Mapped[datetime] = mapped_column(server_default=func.now())
 
 

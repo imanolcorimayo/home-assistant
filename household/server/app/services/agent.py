@@ -11,6 +11,8 @@ the tool-calling loop automatically.
 import asyncio
 import logging
 import os
+import uuid
+from contextvars import ContextVar
 from datetime import date
 
 from google import genai
@@ -29,6 +31,14 @@ from app.services.transactions import (
 )
 
 log = logging.getLogger("agent")
+
+# Set by the Director before delegating to a subagent (route_to_registrar /
+# route_to_consultant). _log_run reads it so the subagent's row points back to
+# the Director's via parent_run_id. ContextVar propagates automatically to the
+# asyncio.create_task() fire-and-forget logging path.
+current_parent_run_id: ContextVar[uuid.UUID | None] = ContextVar(
+    "current_parent_run_id", default=None
+)
 
 MCP_URL = os.environ.get("MCP_URL", "http://household_mcp:8000/mcp")
 # Tried in order; on a 429 (daily free-tier quota) we rotate to the next,
@@ -167,6 +177,42 @@ CONSULTANT_SYSTEM_TMPL = (
 )
 
 
+# Prompt for the Director (orchestrator) bot — chooses which subagent
+# should handle each message and routes via two local tools. We name the
+# tools verbatim here because the agent picks BY name; capabilities are
+# described in one line each so the model can match user intent quickly.
+# The system prompt instructs no paraphrase — the code also enforces a
+# bypass (see `_extract_subagent_reply`), so the user sees the subagent's
+# answer exactly.
+DIRECTOR_SYSTEM_TMPL = (
+    "Sos el director técnico de un equipo de dos subagentes que atienden a "
+    "la familia. Hoy es {today}. Tu único trabajo: leer cada mensaje y "
+    "decidir CUÁL de los dos lo resuelve, llamando la tool correspondiente. "
+    "No respondas vos sobre transacciones — siempre delegá.\n\n"
+    "Tus dos subordinados (tools):\n"
+    "• route_to_registrar(text) — registra/edita gastos e ingresos, paga "
+    "recurrentes, crea categorías, presupuestos, miembros y cuentas. "
+    "CUALQUIER acción que escriba en la base de datos va acá.\n"
+    "• route_to_consultant(text) — responde consultas analíticas: cuánto se "
+    "gastó/cobró, balances, top categorías, tendencias, comparaciones de "
+    "períodos, estado de presupuestos del mes, recurrentes pendientes, "
+    "saldos. Solo lectura.\n\n"
+    "Cómo decidís:\n"
+    "1. Verbos de acción (gasté, pagué, compré, registrá, cambiá, cobré, "
+    "creá) → Registrador.\n"
+    "2. Verbos de consulta (cuánto, dame, mostrame, comparame, balance, "
+    "tendencia, top) → Consultor.\n"
+    "3. Confirmaciones o follow-ups ('sí', 'dale', 'guardalo igual') → el "
+    "mismo subagente que respondió antes en esta conversación.\n"
+    "4. Pasale el texto ORIGINAL del usuario tal cual — no lo resumas ni lo "
+    "reescribas.\n\n"
+    "Si la tool devuelve ok=False, decí brevemente al usuario que hubo un "
+    "problema y proponé reintentar. Si dudás, eligí el Consultor (es "
+    "read-only y no rompe nada).\n\n"
+    "{sender_line}"
+)
+
+
 async def run_consultant_agent(
     message: str,
     session_id: str | None = None,
@@ -243,6 +289,156 @@ async def run_consultant_agent(
     return reply
 
 
+async def run_director_agent(
+    message: str,
+    session_id: str | None = None,
+    sender_name: str | None = None,
+    *,
+    registrar_session_id: str | None = None,
+    consultant_session_id: str | None = None,
+) -> str:
+    """Director (orchestrator): chooses Registrador or Consultor and forwards.
+
+    Two local Python tools (defined as closures below) wrap `run_agent` and
+    `run_consultant_agent`. The Gemini SDK introspects their docstrings and
+    type hints to build the function-call schema. These tools live in the
+    api process (NOT in the MCP server), which is why we don't need an MCP
+    session here — avoids the import cycle and saves a round-trip.
+
+    Memory: the Director keeps its own history under `session_id` (e.g.
+    'director:telegram:{chat_id}'). Subagent histories live under their own
+    keys (passed as `registrar_session_id` / `consultant_session_id`),
+    matching what the standalone bots use — so the user can mix bots and
+    keep continuity.
+
+    parent_run_id propagation: we pre-assign `orch_id`, set the ContextVar
+    before invoking Gemini, and `_log_run` inside the subagents reads it
+    automatically when persisting their rows. The Director's own row uses
+    parent_run_id=None.
+
+    Reply bypass: the closure variable `last_subagent_reply` is set the
+    moment a routing tool fires. After Gemini returns, we prefer that over
+    `resp.text` — the LLM never gets to paraphrase the subagent. This is
+    more robust than reading the SDK's `automatic_function_calling_history`,
+    which can come back empty when a model rotation truncates the final
+    response (we hit this in production: 503 mid-loop, the second model
+    re-ran the tool but produced no final text, and the user saw "(sin
+    respuesta)" even though the subagent had answered correctly).
+    """
+    today = date.today()
+    sender_line = SENDER_LINE_TMPL.format(name=sender_name) if sender_name else ""
+    system = DIRECTOR_SYSTEM_TMPL.format(
+        today=today.isoformat(),
+        sender_line=sender_line,
+    )
+
+    orch_id = uuid.uuid4()
+    parent_token = current_parent_run_id.set(orch_id)
+
+    # Captured inside the routing tools; read after generate_content returns.
+    # Last write wins — if model rotation re-runs the tool, we keep the
+    # newer reply.
+    last_subagent_reply: str | None = None
+
+    async def route_to_registrar(text: str) -> dict:
+        """Delega al Registrador: registra/edita gastos, ingresos, recurrentes,
+        categorías, presupuestos, miembros o cuentas. Usar para CUALQUIER
+        acción que MODIFIQUE el estado de la familia.
+
+        Args:
+            text: el mensaje original del usuario, tal cual lo recibiste.
+        """
+        nonlocal last_subagent_reply
+        try:
+            reply = await run_agent(
+                message=text,
+                session_id=registrar_session_id,
+                sender_name=sender_name,
+            )
+            last_subagent_reply = reply
+            return {"ok": True, "reply": reply}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("route_to_registrar failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    async def route_to_consultant(text: str) -> dict:
+        """Delega al Consultor: responde consultas analíticas (read-only) —
+        montos, balances, top categorías, tendencias, comparaciones,
+        presupuestos del mes, recurrentes pendientes, saldos.
+
+        Args:
+            text: el mensaje original del usuario, tal cual lo recibiste.
+        """
+        nonlocal last_subagent_reply
+        try:
+            reply = await run_consultant_agent(
+                message=text,
+                session_id=consultant_session_id,
+                sender_name=sender_name,
+            )
+            last_subagent_reply = reply
+            return {"ok": True, "reply": reply}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("route_to_consultant failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    history = _SESSIONS.get(session_id, []) if session_id else []
+    cur_turn = _user_turn(message)
+    contents = history + [cur_turn]
+
+    cfg = types.GenerateContentConfig(
+        system_instruction=system,
+        temperature=0.1,
+        tools=[route_to_registrar, route_to_consultant],
+    )
+
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    resp = None
+    model_used: str | None = None
+    last_err: BaseException | None = None
+    try:
+        for model in MODELS:
+            try:
+                resp = await client.aio.models.generate_content(
+                    model=model, contents=contents, config=cfg
+                )
+                model_used = model
+                break
+            except BaseException as exc:  # noqa: BLE001
+                if _is_retriable_error(exc):
+                    log.warning("director model %s unavailable, rotating", model)
+                    last_err = exc
+                    continue
+                raise
+        if resp is None:
+            raise last_err or RuntimeError("no model produced a response")
+        # Bypass: prefer the subagent's reply (captured in the routing tool
+        # closure) over `resp.text`. Works even when model rotation leaves
+        # the final text empty, as long as the tool fired at least once.
+        reply = last_subagent_reply or (resp.text or "").strip() or "(sin respuesta)"
+    except BaseException as exc:  # noqa: BLE001
+        asyncio.create_task(
+            _log_run(session_id, message, None, model_used, [], str(exc),
+                     agent_run_id=orch_id, parent_run_id=None)
+        )
+        current_parent_run_id.reset(parent_token)
+        raise
+
+    prompt_tok, output_tok, total_tok = _extract_usage(resp)
+    asyncio.create_task(
+        _log_run(session_id, message, reply, model_used,
+                 _extract_tool_calls(resp), None,
+                 prompt_tok, output_tok, total_tok,
+                 agent_run_id=orch_id, parent_run_id=None)
+    )
+    if session_id:
+        _SESSIONS[session_id] = (
+            history + [_user_turn(message), _model_turn(reply)]
+        )[-_MAX_TURNS:]
+    current_parent_run_id.reset(parent_token)
+    return reply
+
+
 def _format_recent(rows: list[dict]) -> str:
     if not rows:
         return "(no hay gastos recientes)"
@@ -307,6 +503,9 @@ def _extract_usage(resp) -> tuple[int | None, int | None, int | None]:
     )
 
 
+_UNSET: object = object()
+
+
 async def _log_run(
     session_id: str | None,
     input_text: str,
@@ -317,25 +516,41 @@ async def _log_run(
     prompt_tokens: int | None = None,
     output_tokens: int | None = None,
     total_tokens: int | None = None,
+    agent_run_id: uuid.UUID | None = None,
+    parent_run_id: object = _UNSET,
 ) -> None:
     """Persist one agent_run row. Fire-and-forget: scheduled with
     asyncio.create_task after the reply is sent, so it never adds latency.
-    Swallows its own errors — a failed log must not surface to the user."""
+    Swallows its own errors — a failed log must not surface to the user.
+
+    `agent_run_id`: pre-assigned UUID. Passed by the Director so its row id
+    is known *before* the DB write (the subagent tools read it via the
+    ContextVar to set their parent_run_id). When None, the DB generates one.
+
+    `parent_run_id`: if omitted entirely, falls back to the ContextVar set
+    by the Director — so a registrador/consultor run invoked via the
+    Director picks up the link automatically. Pass `None` explicitly to
+    force NULL (used by the Director's own row).
+    """
+    if parent_run_id is _UNSET:
+        parent_run_id = current_parent_run_id.get()
     try:
         async with AsyncSessionLocal() as session:
-            session.add(
-                AgentRun(
-                    session_id=session_id,
-                    input_text=input_text,
-                    reply_text=reply_text,
-                    model_used=model_used,
-                    tool_calls=tool_calls,
-                    error=error,
-                    prompt_tokens=prompt_tokens,
-                    output_tokens=output_tokens,
-                    total_tokens=total_tokens,
-                )
+            kwargs = dict(
+                session_id=session_id,
+                input_text=input_text,
+                reply_text=reply_text,
+                model_used=model_used,
+                tool_calls=tool_calls,
+                error=error,
+                prompt_tokens=prompt_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                parent_run_id=parent_run_id,
             )
+            if agent_run_id is not None:
+                kwargs["agent_run_id"] = agent_run_id
+            session.add(AgentRun(**kwargs))
             await session.commit()
     except Exception:  # noqa: BLE001 - background logging is best-effort
         log.warning("agent_run logging failed", exc_info=True)
