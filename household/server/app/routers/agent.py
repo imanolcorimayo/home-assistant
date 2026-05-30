@@ -9,7 +9,7 @@ import logging
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
-from app.services.agent import run_agent
+from app.services.agent import run_agent, run_consultant_agent
 
 log = logging.getLogger("agent_router")
 
@@ -34,6 +34,24 @@ async def agent_endpoint(req: AgentRequest) -> AgentResponse:
         reply = await run_agent(text, session_id=req.session_id)
     except Exception as exc:
         log.exception("agent failed: %s", exc)
+        reply = f"error del agente: {exc}"
+    return AgentResponse(reply=reply)
+
+
+@router.post("/consultant", response_model=AgentResponse)
+async def consultant_endpoint(req: AgentRequest) -> AgentResponse:
+    """Web-facing twin of the Consultor Telegram bot — answers analytics
+    questions instead of capturing. Reuses the same read-only agent loop.
+    The session_id is prefixed 'consultant:web:' so agent_run rows can be
+    filtered per agent (same convention as telegram_consultant.py)."""
+    text = (req.text or "").strip()
+    if not text:
+        return AgentResponse(reply="mensaje vacío")
+    session_id = f"consultant:web:{req.session_id}" if req.session_id else None
+    try:
+        reply = await run_consultant_agent(text, session_id=session_id)
+    except Exception as exc:
+        log.exception("consultant failed: %s", exc)
         reply = f"error del agente: {exc}"
     return AgentResponse(reply=reply)
 

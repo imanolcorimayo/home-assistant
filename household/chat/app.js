@@ -1,8 +1,12 @@
 // Absolute paths: page is served at the site root, API lives under /api.
-// Text and media both go through the expense-registrar agent now — the model
-// reads receipt photos / voice notes directly (no separate parser path).
-const ENDPOINT = "/api/agent";
+// Two conversational agents share this UI, picked by the header toggle:
+//   - "registrar"  -> /api/agent       (captures gastos/ingresos)
+//   - "consultor"  -> /api/consultant   (read-only analytics Q&A)
+// Media (photo/voice) always goes to the registrar — the consultor is text-only.
+const ENDPOINTS = { registrar: "/api/agent", consultor: "/api/consultant" };
 const MEDIA_ENDPOINT = "/api/agent/media";
+
+let mode = "registrar";
 
 // Stable per-device id so the agent can keep conversation context across
 // messages (e.g. "sí, guardalo igual" after a duplicate flag).
@@ -24,6 +28,8 @@ const $send = document.getElementById("send");
 const $attach = document.getElementById("attach");
 const $mic = document.getElementById("mic");
 const $imageInput = document.getElementById("image-input");
+const $modeRegistrar = document.getElementById("mode-registrar");
+const $modeConsultor = document.getElementById("mode-consultor");
 
 function addBubble(text, who, opts = {}) {
   const el = document.createElement("div");
@@ -39,7 +45,7 @@ async function send(text) {
   const placeholder = addBubble("procesando…", "bot", { thinking: true });
 
   try {
-    const r = await fetch(ENDPOINT, {
+    const r = await fetch(ENDPOINTS[mode], {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, session_id: SESSION_ID }),
@@ -123,5 +129,29 @@ $mic.addEventListener("click", async () => {
     addBubble(`no pude acceder al micrófono: ${err.message}`, "bot");
   }
 });
+
+// --- mode toggle (registrar / consultor) ---
+function setMode(next) {
+  if (next === mode) return;
+  mode = next;
+  $modeRegistrar.classList.toggle("active", mode === "registrar");
+  $modeConsultor.classList.toggle("active", mode === "consultor");
+  // Consultor is text-only; the registrar handles media. Hint it visually.
+  const mediaOff = mode === "consultor";
+  $attach.disabled = mediaOff;
+  $mic.disabled = mediaOff;
+  $input.placeholder = mediaOff
+    ? "ej: cuánto gasté este mes en super"
+    : "ej: gasté 1500 en el chino";
+  addBubble(
+    mediaOff
+      ? "Modo Consultor: preguntame sobre los gastos e ingresos de la familia."
+      : "Modo Registrar: mandame un gasto o ingreso por texto, foto o nota de voz.",
+    "bot"
+  );
+}
+
+$modeRegistrar.addEventListener("click", () => setMode("registrar"));
+$modeConsultor.addEventListener("click", () => setMode("consultor"));
 
 addBubble("Mandame un gasto o ingreso por texto, foto del ticket, o nota de voz.", "bot");
