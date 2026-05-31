@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header %}
+{% block title %}Actividad · assistant{% endblock %}
+{% block content %}
+  {% call page_header("Actividad", "Uso del asistente por conversación") %}{% endcall %}
+
+  {# KPI cards — all-time rollups for this member. #}
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+    {% set cards = [
+      ("Conversaciones", totals.sessions),
+      ("Mensajes",       totals.runs),
+      ("Tokens",         totals.tokens),
+      ("Llamadas a tools", totals.tool_calls),
+    ] %}
+    {% for label, value in cards %}
+      <div class="rounded-xl border border-line bg-surface p-4">
+        <div class="text-2xl font-semibold tabular-nums">{{ "{:,}".format(value) }}</div>
+        <div class="text-xs text-muted mt-1">{{ label }}</div>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if sessions %}
+    <div class="rounded-xl border border-line bg-surface overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="text-left text-xs text-muted border-b border-line">
+          <tr>
+            <th class="px-4 py-2.5 font-medium">Conversación</th>
+            <th class="px-4 py-2.5 font-medium text-right">Mensajes</th>
+            <th class="px-4 py-2.5 font-medium text-right">Tokens</th>
+            <th class="px-4 py-2.5 font-medium text-right">Tools</th>
+            <th class="px-4 py-2.5 font-medium text-right hidden sm:table-cell">Última</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sessions %}
+            <tr class="border-b border-line last:border-0">
+              <td class="px-4 py-2.5">
+                <a href="/actividad/{{ s.chat_session_id }}"
+                   class="block truncate max-w-[16rem] md:max-w-md hover:underline">{{ s.title or "Conversación" }}</a>
+                {% if s.errors %}<span class="text-xs text-expense">{{ s.errors }} con error</span>{% endif %}
+              </td>
+              <td class="px-4 py-2.5 text-right tabular-nums">{{ s.runs }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums">{{ "{:,}".format(s.tokens) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums">{{ s.tool_calls }}</td>
+              <td class="px-4 py-2.5 text-right text-muted hidden sm:table-cell whitespace-nowrap">
+                {{ s.last_ts.strftime("%d/%m %H:%M") if s.last_ts else "—" }}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="rounded-xl border border-line bg-surface p-6">
+      <p class="text-muted">Todavía no hay conversaciones. Abrí el chat para empezar.</p>
+    </div>
+  {% endif %}
+{% endblock %}

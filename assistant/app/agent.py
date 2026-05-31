@@ -28,9 +28,10 @@ log = logging.getLogger("agent")
 # to the next instead of failing the whole request.
 _RETRIABLE_CODES = {404, 429, 500, 502, 503, 504}
 
-# In-memory history per member (MVP: single worker, lost on restart). Only text
+# In-memory history per chat_session (fast path; lost on restart). Only text
 # turns are kept — enough for follow-ups ("sí, guardalo igual") without resending
-# tool traffic.
+# tool traffic. On a cache miss (resumed session, post-restart) we rebuild it
+# from the agent_run rows — agent_run IS the durable message log.
 _SESSIONS: dict[str, list] = {}
 _MAX_TURNS = 16
 _MAX_ITERS = 8  # safety cap on tool-loop rounds per message
@@ -112,6 +113,54 @@ def _model_turn(text: str):
     return types.Content(role="model", parts=[types.Part(text=text)])
 
 
+def _title_from(message: str) -> str:
+    """Short label for a new conversation, from its first message."""
+    t = " ".join(message.split())
+    return (t[:57] + "…") if len(t) > 58 else (t or "Conversación")
+
+
+async def _ensure_session(family_id, member_id, session_id, first_message):
+    """Return a valid chat_session_id for this turn. If session_id is given and
+    belongs to this member, reuse it; otherwise open a new thread titled from
+    the first message. Always family/member-scoped — never trusts a foreign id."""
+    if session_id:
+        row = await db.fetchrow(
+            """
+            SELECT chat_session_id FROM chat_session
+            WHERE chat_session_id = $1::uuid AND family_id = $2 AND member_id = $3
+            """,
+            str(session_id), family_id, member_id,
+        )
+        if row is not None:
+            return row["chat_session_id"]
+    return await db.fetchval(
+        """
+        INSERT INTO chat_session (family_id, member_id, title)
+        VALUES ($1, $2, $3) RETURNING chat_session_id
+        """,
+        family_id, member_id, _title_from(first_message),
+    )
+
+
+async def _load_history(chat_session_id) -> list:
+    """Rebuild the model history for a session from its agent_run rows (the
+    durable log). Used on a cold cache — resumed session or post-restart."""
+    rows = await db.fetch(
+        """
+        SELECT input_text, reply_text FROM agent_run
+        WHERE chat_session_id = $1 AND error IS NULL AND reply_text IS NOT NULL
+        ORDER BY created_ts DESC
+        LIMIT $2
+        """,
+        chat_session_id, _MAX_TURNS // 2,
+    )
+    history = []
+    for r in reversed(rows):  # back to chronological
+        history.append(_user_turn(r["input_text"] or ""))
+        history.append(_model_turn(r["reply_text"] or ""))
+    return history
+
+
 def _extract_usage(resp):
     um = getattr(resp, "usage_metadata", None)
     if um is None:
@@ -123,20 +172,26 @@ def _extract_usage(resp):
     )
 
 
-async def _log_run(family_id, member_id, session_id, input_text, reply_text,
+async def _log_run(family_id, member_id, chat_session_id, input_text, reply_text,
                    model_used, tool_calls, error, p_tok=None, o_tok=None, t_tok=None):
-    """Persist one agent_run row, fire-and-forget. Swallows its own errors."""
+    """Persist one agent_run row + bump the session's updated_ts, fire-and-forget.
+    Swallows its own errors."""
     import json
     try:
         await db.execute(
             """
             INSERT INTO agent_run
-                (family_id, member_id, session_id, input_text, reply_text,
+                (family_id, member_id, chat_session_id, input_text, reply_text,
                  model_used, tool_calls, error, prompt_tokens, output_tokens, total_tokens)
             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)
             """,
-            family_id, member_id, session_id, input_text, reply_text,
+            family_id, member_id, chat_session_id, input_text, reply_text,
             model_used, json.dumps(tool_calls), error, p_tok, o_tok, t_tok,
+        )
+        # Touch the thread so the resume picker sorts by real recency.
+        await db.execute(
+            "UPDATE chat_session SET updated_ts = NOW() WHERE chat_session_id = $1",
+            chat_session_id,
         )
     except Exception:  # noqa: BLE001 - background logging is best-effort
         log.warning("agent_run logging failed", exc_info=True)
@@ -270,13 +325,15 @@ def _build_tools(family_id, member_id) -> list:
             create_category, create_categories, create_budget, create_account]
 
 
-async def handle(message: str, member) -> str:
+async def handle(message: str, member, session_id=None) -> tuple[str, str]:
     """Run one chat message through the agent. `member` is the asyncpg Record of
     the logged-in user; family_id/member_id are taken from it (the session),
-    never from the message. Returns the reply text."""
+    never from the message. `session_id` is the chat_session to continue (None =
+    start a new thread). Returns (reply_text, chat_session_id as str)."""
     family_id = member["family_id"]
     member_id = member["member_id"]
-    session_id = str(member_id)
+    chat_session_id = await _ensure_session(family_id, member_id, session_id, message)
+    sid = str(chat_session_id)
 
     ctx = await context.build_family_context(family_id)
     recent = await tools.recent_transactions(family_id, limit=20, kind="expense")
@@ -290,7 +347,9 @@ async def handle(message: str, member) -> str:
         recent=context.format_recent(recent),
     )
 
-    history = _SESSIONS.get(session_id, [])
+    history = _SESSIONS.get(sid)
+    if history is None:  # cold cache: rebuild from the durable log
+        history = await _load_history(chat_session_id)
     contents = history + [_user_turn(message)]
 
     tool_list = _build_tools(family_id, member_id)
@@ -348,14 +407,14 @@ async def handle(message: str, member) -> str:
             log.warning("agent hit max iterations (%s)", _MAX_ITERS)
     except BaseException as exc:  # noqa: BLE001 - log the failed run, then re-raise
         asyncio.create_task(
-            _log_run(family_id, member_id, session_id, message, None, model_used,
+            _log_run(family_id, member_id, chat_session_id, message, None, model_used,
                      tool_calls, str(exc), p_sum, o_sum, t_sum)
         )
         raise
 
     asyncio.create_task(
-        _log_run(family_id, member_id, session_id, message, reply, model_used,
+        _log_run(family_id, member_id, chat_session_id, message, reply, model_used,
                  tool_calls, None, p_sum, o_sum, t_sum)
     )
-    _SESSIONS[session_id] = (history + [_user_turn(message), _model_turn(reply)])[-_MAX_TURNS:]
-    return reply
+    _SESSIONS[sid] = (history + [_user_turn(message), _model_turn(reply)])[-_MAX_TURNS:]
+    return reply, sid

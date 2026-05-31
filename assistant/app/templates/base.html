@@ -83,6 +83,14 @@
       <header class="flex items-center justify-between px-4 h-12 bg-ink text-white shrink-0">
         <span class="font-medium text-sm">Asistente</span>
         <div class="flex items-center gap-1">
+          <button id="chat-new" class="p-1.5 rounded hover:bg-white/15" aria-label="Nueva conversación" title="Nueva conversación">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          </button>
+          <button id="chat-history" class="p-1.5 rounded hover:bg-white/15" aria-label="Conversaciones" title="Conversaciones">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.7 9.7 0 0 0-6.7 2.8L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+          </button>
           <button id="chat-expand" class="p-1.5 rounded hover:bg-white/15" aria-label="Expandir" title="Expandir">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
@@ -93,7 +101,18 @@
           </button>
         </div>
       </header>
-      <div id="chat-log" class="flex-1 overflow-y-auto p-3 flex flex-col gap-2 bg-bg"></div>
+      <div class="relative flex-1 min-h-0 flex flex-col">
+        <div id="chat-log" class="flex-1 overflow-y-auto p-3 flex flex-col gap-2 bg-bg"></div>
+
+        {# Sessions drawer — slides over the log when the history button is hit. #}
+        <div id="chat-sessions" class="hidden absolute inset-0 bg-surface flex flex-col">
+          <div class="px-4 h-10 flex items-center justify-between border-b border-line shrink-0">
+            <span class="text-sm font-medium">Conversaciones</span>
+            <button id="chat-sessions-close" class="text-muted hover:text-ink text-sm">Volver</button>
+          </div>
+          <div id="chat-sessions-list" class="flex-1 overflow-y-auto p-2 flex flex-col gap-1"></div>
+        </div>
+      </div>
       <form id="chat-form" class="flex gap-2 p-3 border-t border-line bg-surface shrink-0">
         <textarea id="chat-input" rows="1" placeholder="Escribí un mensaje..." autocomplete="off"
                   class="flex-1 resize-none rounded-lg border border-line px-3 py-2 text-sm

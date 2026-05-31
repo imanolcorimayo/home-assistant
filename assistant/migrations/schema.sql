@@ -319,26 +319,56 @@ CREATE TRIGGER trg_notification_preference_updated_ts
     FOR EACH ROW EXECUTE FUNCTION fn_set_updated_ts();
 
 -- ============================================================
--- 10. agent_run
+-- 10. chat_session
+--     One row per conversation thread in the chat. A member can have many
+--     (start a new one, resume an old one). The agent's history for a turn
+--     is rebuilt from the agent_run rows that point here — there is no
+--     separate message table; agent_run IS the message log. `title` is a
+--     short label derived from the first message.
+-- ============================================================
+
+CREATE TABLE chat_session (
+    chat_session_id UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id       UUID         NOT NULL REFERENCES family(family_id),
+    member_id       UUID         NOT NULL REFERENCES member(member_id),
+    title           TEXT,
+    created_ts      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_ts      TIMESTAMPTZ
+);
+
+CREATE TRIGGER trg_chat_session_updated_ts
+    BEFORE UPDATE ON chat_session
+    FOR EACH ROW EXECUTE FUNCTION fn_set_updated_ts();
+
+-- Sessions are listed per member, most recent first (resume picker + Actividad).
+CREATE INDEX idx_chat_session_member
+    ON chat_session (family_id, member_id, created_ts DESC);
+
+-- ============================================================
+-- 11. agent_run
 --     Observability: one row per chat message run through the agent.
 --     Written fire-and-forget so logging never adds latency. member_id
 --     is the person who triggered it (NULL for system/Observer runs).
+--     chat_session_id ties the run to its conversation thread.
 -- ============================================================
 
 CREATE TABLE agent_run (
-    agent_run_id  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_id     UUID         NOT NULL REFERENCES family(family_id),
-    member_id     UUID         REFERENCES member(member_id),
-    session_id    TEXT,
-    input_text    TEXT,
-    reply_text    TEXT,
-    model_used    TEXT,
-    tool_calls    JSONB        NOT NULL DEFAULT '[]'::jsonb,
-    error         TEXT,
-    prompt_tokens INTEGER,
-    output_tokens INTEGER,
-    total_tokens  INTEGER,
-    created_ts    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    agent_run_id    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id       UUID         NOT NULL REFERENCES family(family_id),
+    member_id       UUID         REFERENCES member(member_id),
+    chat_session_id UUID         REFERENCES chat_session(chat_session_id),
+    input_text      TEXT,
+    reply_text      TEXT,
+    model_used      TEXT,
+    tool_calls      JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    error           TEXT,
+    prompt_tokens   INTEGER,
+    output_tokens   INTEGER,
+    total_tokens    INTEGER,
+    created_ts      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_agent_run_created ON agent_run (family_id, created_ts DESC);
+
+-- Per-conversation rollups (Actividad page rebuilds token/tool usage from here).
+CREATE INDEX idx_agent_run_session ON agent_run (chat_session_id, created_ts);
