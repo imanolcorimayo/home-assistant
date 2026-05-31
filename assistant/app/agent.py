@@ -24,7 +24,9 @@ from app import config, context, db, tools
 
 log = logging.getLogger("agent")
 
-_RETRIABLE_CODES = {429, 500, 502, 503, 504}
+# 404 included so a model name that's unknown/unsupported for this key rotates
+# to the next instead of failing the whole request.
+_RETRIABLE_CODES = {404, 429, 500, 502, 503, 504}
 
 # In-memory history per member (MVP: single worker, lost on restart). Only text
 # turns are kept — enough for follow-ups ("sí, guardalo igual") without resending

@@ -25,7 +25,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 AGENT_MODELS = [
     m.strip()
     for m in os.environ.get(
-        "AGENT_MODELS", "gemini-2.5-flash,gemini-2.5-flash-lite"
+        "AGENT_MODELS", "gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-3.5-flash,gemini-2.5-flash"
     ).split(",")
     if m.strip()
 ]
