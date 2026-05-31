@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header, money %}
+{% block title %}Configuración · assistant{% endblock %}
+{% block content %}
+  {% call page_header("Configuración", "Pedile cambios al asistente por chat") %}{% endcall %}
+
+  <div class="rounded-lg border border-line bg-bg px-4 py-2.5 text-sm text-muted mb-6">
+    Por ahora esto es de sólo lectura. Para crear o corregir cuentas, categorías,
+    presupuestos o recurrentes, decíselo al chat.
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6">
+    {# Cuentas #}
+    <section>
+      <h2 class="text-sm font-semibold text-muted mb-2">Cuentas</h2>
+      <div class="rounded-xl border border-line bg-surface divide-y divide-line">
+        {% for a in balances %}
+          <div class="flex items-center justify-between px-4 py-3">
+            <div><div class="text-sm font-medium">{{ a.name }}</div>
+              <div class="text-xs text-muted">{{ a.kind }} · {{ a.currency }}</div></div>
+            <div class="tabular-nums text-sm {% if a.balance < 0 %}text-expense{% endif %}">{{ money(a.balance, a.currency) }}</div>
+          </div>
+        {% else %}<div class="px-4 py-3 text-sm text-muted">Sin cuentas.</div>{% endfor %}
+      </div>
+    </section>
+
+    {# Presupuestos #}
+    <section>
+      <h2 class="text-sm font-semibold text-muted mb-2">Presupuestos mensuales</h2>
+      <div class="rounded-xl border border-line bg-surface divide-y divide-line">
+        {% for b in budgets %}
+          <div class="flex items-center justify-between px-4 py-3 text-sm">
+            <span>{{ b.category }}</span>
+            <span class="tabular-nums text-muted">{{ money(b.limit) }}</span>
+          </div>
+        {% else %}<div class="px-4 py-3 text-sm text-muted">Sin presupuestos.</div>{% endfor %}
+      </div>
+    </section>
+
+    {# Recurrentes #}
+    <section>
+      <h2 class="text-sm font-semibold text-muted mb-2">Recurrentes</h2>
+      <div class="rounded-xl border border-line bg-surface divide-y divide-line">
+        {% for r in recurring %}
+          <div class="flex items-center justify-between px-4 py-3">
+            <div><div class="text-sm font-medium">{{ r.name }}</div>
+              <div class="text-xs text-muted">día {{ r.day_of_month }} · {{ r.category }}
+                {%- if r.paid_this_month %} · <span class="text-income">pagado</span>{% endif %}</div></div>
+            <div class="tabular-nums text-sm">{{ money(r.amount) }}</div>
+          </div>
+        {% else %}<div class="px-4 py-3 text-sm text-muted">Sin recurrentes.</div>{% endfor %}
+      </div>
+    </section>
+
+    {# Categorías #}
+    <section>
+      <h2 class="text-sm font-semibold text-muted mb-2">Categorías ({{ categories | length }})</h2>
+      <div class="rounded-xl border border-line bg-surface p-3 flex flex-wrap gap-1.5">
+        {% for c in categories %}
+          <span class="text-xs rounded-full border border-line px-2.5 py-1">{{ c.name }}</span>
+        {% else %}<span class="text-sm text-muted">Sin categorías.</span>{% endfor %}
+      </div>
+    </section>
+  </div>
+{% endblock %}

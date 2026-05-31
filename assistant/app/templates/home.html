@@ -1,16 +1,111 @@
 {% extends "base.html" %}
-{% from "macros.html" import page_header %}
+{% from "macros.html" import page_header, money, icon %}
 {% block title %}Inicio · assistant{% endblock %}
 {% block content %}
   {% call page_header("Hola, " + member["full_name"].split(" ")[0], family["name"]) %}{% endcall %}
 
-  <div class="rounded-xl border border-line bg-surface p-6">
-    <p class="text-muted">
-      Acá va el resumen del día a día: saldos de cuentas, gastos e ingresos del mes,
-      últimos movimientos, presupuestos y recurrentes. Llega en el próximo paso.
-    </p>
-    <p class="mt-3 text-sm text-muted">
-      Mientras tanto, abrí el chat (botón abajo a la derecha) para registrar o consultar.
-    </p>
+  {# Mes actual — gastos / ingresos / neto. #}
+  <div class="grid grid-cols-3 gap-3 mb-6">
+    {% set cards = [
+      ("Gastos del mes", summary.gastos, "expense"),
+      ("Ingresos del mes", summary.ingresos, "income"),
+      ("Neto", summary.neto, "neto"),
+    ] %}
+    {% for label, value, tone in cards %}
+      <div class="rounded-xl border border-line bg-surface p-4">
+        <div class="text-xs text-muted">{{ label }}</div>
+        <div class="text-lg md:text-2xl font-semibold tabular-nums mt-1
+                    {% if tone == 'expense' %}text-expense
+                    {% elif tone == 'income' %}text-income
+                    {% elif value < 0 %}text-expense{% endif %}">
+          {{ money(value) }}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6">
+    {# Saldos de cuentas #}
+    <section>
+      <h2 class="text-sm font-semibold text-muted mb-2">Cuentas</h2>
+      <div class="rounded-xl border border-line bg-surface divide-y divide-line">
+        {% for a in balances %}
+          <div class="flex items-center justify-between px-4 py-3">
+            <div>
+              <div class="text-sm font-medium">{{ a.name }}</div>
+              <div class="text-xs text-muted">{{ a.kind }}</div>
+            </div>
+            <div class="tabular-nums text-sm {% if a.balance < 0 %}text-expense{% endif %}">
+              {{ money(a.balance, a.currency) }}
+            </div>
+          </div>
+        {% else %}
+          <div class="px-4 py-3 text-sm text-muted">Sin cuentas todavía.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    {# Recurrentes pendientes este mes #}
+    <section>
+      <h2 class="text-sm font-semibold text-muted mb-2">Recurrentes pendientes</h2>
+      <div class="rounded-xl border border-line bg-surface divide-y divide-line">
+        {% for r in pending %}
+          <div class="flex items-center justify-between px-4 py-3">
+            <div>
+              <div class="text-sm font-medium">{{ r.name }}</div>
+              <div class="text-xs text-muted">día {{ r.day_of_month }} · {{ r.category }}</div>
+            </div>
+            <div class="tabular-nums text-sm">{{ money(r.amount) }}</div>
+          </div>
+        {% else %}
+          <div class="px-4 py-3 text-sm text-muted">Nada pendiente. 🎉</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    {# Presupuestos vs gasto #}
+    <section>
+      <h2 class="text-sm font-semibold text-muted mb-2">Presupuestos</h2>
+      <div class="rounded-xl border border-line bg-surface divide-y divide-line">
+        {% for b in budgets %}
+          {% set pct = (b.spent / b.limit * 100) if b.limit else 0 %}
+          <div class="px-4 py-3">
+            <div class="flex items-center justify-between text-sm">
+              <span class="font-medium">{{ b.category }}</span>
+              <span class="tabular-nums text-muted">{{ money(b.spent) }} / {{ money(b.limit) }}</span>
+            </div>
+            <div class="mt-2 h-1.5 rounded-full bg-bg overflow-hidden">
+              <div class="h-full {% if pct > 100 %}bg-expense{% else %}bg-ink{% endif %}"
+                   style="width: {{ [pct, 100] | min }}%"></div>
+            </div>
+          </div>
+        {% else %}
+          <div class="px-4 py-3 text-sm text-muted">Sin presupuestos definidos.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    {# Últimos movimientos #}
+    <section>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold text-muted">Últimos movimientos</h2>
+        <a href="/movimientos" class="text-xs text-muted hover:text-ink">Ver todos</a>
+      </div>
+      <div class="rounded-xl border border-line bg-surface divide-y divide-line">
+        {% for t in recent %}
+          <div class="flex items-center justify-between px-4 py-3">
+            <div class="min-w-0">
+              <div class="text-sm truncate">{{ t.description or "(sin descripción)" }}</div>
+              <div class="text-xs text-muted">{{ t.date }} · {{ t.category }}</div>
+            </div>
+            <div class="tabular-nums text-sm shrink-0 {% if t.kind == 'income' %}text-income{% else %}text-expense{% endif %}">
+              {{ "+" if t.kind == "income" else "−" }}{{ money(t.amount, t.currency) }}
+            </div>
+          </div>
+        {% else %}
+          <div class="px-4 py-3 text-sm text-muted">Sin movimientos. Abrí el chat para registrar el primero.</div>
+        {% endfor %}
+      </div>
+    </section>
   </div>
 {% endblock %}

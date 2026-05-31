@@ -13,12 +13,12 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import agent, config, db
+from app import agent, config, db, queries, tools
 from app.auth import current_member, router as auth_router
 
 logging.basicConfig(
@@ -55,11 +55,19 @@ async def home(request: Request):
     member = await current_member(request)
     if member is None:
         return RedirectResponse("/login", status_code=303)
-    family = await db.fetchrow(
-        "SELECT * FROM family WHERE family_id = $1", member["family_id"]
-    )
+    fid = member["family_id"]
+    family = await db.fetchrow("SELECT * FROM family WHERE family_id = $1", fid)
+    balances = await queries.account_balances(fid)
+    summary = await queries.month_summary(fid)
+    recent = await tools.recent_transactions(fid, limit=8)
+    budgets = await queries.budgets_vs_spend(fid)
+    recurring = await tools.list_recurring(fid)
+    pending = [r for r in recurring if not r["paid_this_month"]]
     return templates.TemplateResponse(
-        "home.html", {"request": request, "member": member, "family": family}
+        "home.html",
+        {"request": request, "member": member, "family": family,
+         "balances": balances, "summary": summary, "recent": recent,
+         "budgets": budgets, "pending": pending},
     )
 
 
@@ -71,24 +79,34 @@ async def login(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 
-# Display pages — placeholders for now; the shell + global chat work today, the
-# content lands in later steps (dashboard, movimientos list, config CRUD, sessions).
-_PAGES = {
-    "/movimientos":   ("Movimientos", "El listado de transacciones con búsqueda y edición llega pronto."),
-    "/configuracion": ("Configuración", "Categorías, cuentas y presupuestos llegan pronto."),
-}
-
-
 @app.get("/movimientos")
-@app.get("/configuracion")
-async def page(request: Request):
+async def movimientos(request: Request, q: str = "", page: int = 1):
+    """Read-only transaction list (search + pagination). Edits go via the chat."""
     member = await current_member(request)
     if member is None:
         return RedirectResponse("/login", status_code=303)
-    title, note = _PAGES[request.url.path]
+    result = await queries.transactions_page(member["family_id"], q, page)
     return templates.TemplateResponse(
-        "placeholder.html",
-        {"request": request, "member": member, "title": title, "note": note},
+        "movimientos.html",
+        {"request": request, "member": member, "q": q, **result},
+    )
+
+
+@app.get("/configuracion")
+async def configuracion(request: Request):
+    """Read-only view of the family's cuentas / categorías / presupuestos /
+    recurrentes. Changes are made by asking the agent for now."""
+    member = await current_member(request)
+    if member is None:
+        return RedirectResponse("/login", status_code=303)
+    fid = member["family_id"]
+    return templates.TemplateResponse(
+        "configuracion.html",
+        {"request": request, "member": member,
+         "balances": await queries.account_balances(fid),
+         "categories": await queries.categories(fid),
+         "budgets": await queries.budgets_vs_spend(fid),
+         "recurring": await tools.list_recurring(fid)},
     )
 
 
@@ -250,6 +268,14 @@ async def actividad_detail(request: Request, session_id: str):
         "actividad_detail.html",
         {"request": request, "member": member, "session": session, "runs": runs},
     )
+
+
+@app.get("/manual")
+async def manual_marca():
+    """Brand manual brought over from pay-trackr (the analogous project) — a
+    self-contained reference of the design work, shareable as a clean URL.
+    Public on purpose (no login) so it's easy to show."""
+    return FileResponse("app/static/manual-marca.html")
 
 
 @app.get("/health")
