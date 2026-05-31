@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: assistant_db
+    environment:
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-assistant123}
+      POSTGRES_DB: assistant
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Postgres auto-runs any *.sql / *.sh in this dir on first volume init,
+      # in alphabetical order. schema.sql today; numbered 0NN_*.sql migrations
+      # go here later (and sort before schema.sql, so prefix new ones to run
+      # after — or just rebuild the volume during development).
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: assistant_app
+    ports:
+      - "8083:8080"
+    volumes:
+      # Live-mount the code so edits don't require a rebuild during dev.
+      - ./app:/code/app:ro
+    environment:
+      DATABASE_URL: postgresql://assistant:${POSTGRES_PASSWORD:-assistant123}@assistant_db:5432/assistant
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:latest
+    container_name: assistant_adminer
+    ports:
+      - "8890:8080"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: assistant_postgres_data
