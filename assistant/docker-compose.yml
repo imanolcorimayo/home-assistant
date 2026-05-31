@@ -7,7 +7,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-assistant123}
       POSTGRES_DB: assistant
     ports:
-      - "5434:5432"
+      # Loopback only — DB is reachable from the host, never the LAN/internet.
+      - "127.0.0.1:5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Postgres auto-runs any *.sql / *.sh in this dir on first volume init,
@@ -33,7 +34,11 @@ services:
       # Live-mount the code so edits don't require a rebuild during dev.
       - ./app:/code/app:ro
     environment:
+      # compose auto-reads ./.env for these ${...} substitutions.
       DATABASE_URL: postgresql://assistant:${POSTGRES_PASSWORD:-assistant123}@assistant_db:5432/assistant
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-insecure-change-me}
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +48,8 @@ services:
     image: adminer:latest
     container_name: assistant_adminer
     ports:
-      - "8890:8080"
+      # Loopback only — dev DB browser, not exposed beyond this machine.
+      - "127.0.0.1:8890:8080"
     depends_on:
       - postgres
     restart: unless-stopped
