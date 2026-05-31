@@ -33,6 +33,9 @@ services:
     volumes:
       # Live-mount the code so edits don't require a rebuild during dev.
       - ./app:/code/app:ro
+      # Writable media store (chat attachments) — kept OFF the read-only code
+      # mount on purpose. MEDIA_ROOT points inside this volume.
+      - media_data:/data
     environment:
       # compose auto-reads ./.env for these ${...} substitutions.
       DATABASE_URL: postgresql://assistant:${POSTGRES_PASSWORD:-assistant123}@assistant_db:5432/assistant
@@ -41,6 +44,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-dev-insecure-change-me}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       AGENT_MODELS: ${AGENT_MODELS:-gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-3.5-flash,gemini-2.5-flash}
+      MEDIA_ROOT: ${MEDIA_ROOT:-/data/media}
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,3 +63,5 @@ services:
 volumes:
   postgres_data:
     name: assistant_postgres_data
+  media_data:
+    name: assistant_media_data

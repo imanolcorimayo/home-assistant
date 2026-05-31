@@ -29,3 +29,21 @@ AGENT_MODELS = [
     ).split(",")
     if m.strip()
 ]
+
+# ── Media (chat attachments) ───────────────────────────────────────────────
+# Files land on a writable volume (NOT under app/, which is mounted read-only).
+# Layout is family-scoped + date-bucketed under MEDIA_ROOT; the `media` table is
+# the source of truth (relative paths only), so the tree stays portable and
+# exportable later. See app/storage.py.
+MEDIA_ROOT = os.environ.get("MEDIA_ROOT", "/data/media")
+
+# Quality-over-quantity caps (also enforced server-side in /chat/stream).
+MAX_IMAGES = int(os.environ.get("MAX_IMAGES", "3"))
+MAX_AUDIOS = int(os.environ.get("MAX_AUDIOS", "2"))
+MAX_IMAGE_BYTES = int(os.environ.get("MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))   # 5 MB
+MAX_AUDIO_BYTES = int(os.environ.get("MAX_AUDIO_BYTES", str(15 * 1024 * 1024)))  # ~2 min
+ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/webp"}
+ALLOWED_AUDIO_MIME = {
+    "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg",
+    "audio/webm", "audio/aac", "audio/mp4", "audio/m4a", "audio/x-m4a", "audio/flac",
+}

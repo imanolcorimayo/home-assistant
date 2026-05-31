@@ -372,3 +372,30 @@ CREATE INDEX idx_agent_run_created ON agent_run (family_id, created_ts DESC);
 
 -- Per-conversation rollups (Actividad page rebuilds token/tool usage from here).
 CREATE INDEX idx_agent_run_session ON agent_run (chat_session_id, created_ts);
+
+-- ============================================================
+-- 12. media
+--     Chat attachments (receipt photos, etc.) stored on a local disk volume.
+--     This table is the SOURCE OF TRUTH; `storage_path` is RELATIVE to
+--     MEDIA_ROOT so the tree is portable/exportable (see app/storage.py).
+--     Images are kept; audio is sent to the model but not persisted.
+-- ============================================================
+
+CREATE TABLE media (
+    media_id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id         UUID         NOT NULL REFERENCES family(family_id),
+    member_id         UUID         NOT NULL REFERENCES member(member_id),
+    chat_session_id   UUID         REFERENCES chat_session(chat_session_id),
+    kind              TEXT         NOT NULL,            -- image | audio
+    mime              TEXT         NOT NULL,
+    size_bytes        INTEGER      NOT NULL,
+    original_filename TEXT,
+    storage_path      TEXT         NOT NULL,            -- relative to MEDIA_ROOT
+    sha256            TEXT,
+    created_ts        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_ts        TIMESTAMPTZ
+);
+
+CREATE INDEX idx_media_family
+    ON media (family_id, created_ts DESC) WHERE deleted_ts IS NULL;
+CREATE INDEX idx_media_session ON media (chat_session_id);

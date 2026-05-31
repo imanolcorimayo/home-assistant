@@ -60,6 +60,10 @@ SYSTEM_TMPL = (
     "- VARIAS acciones en un turno: si la persona menciona varios gastos, registralos TODOS "
     "(una llamada a add_expense por cada uno). Si te piden armar una lista de categorías, usá "
     "create_categories con todos los nombres de una.\n"
+    "- ADJUNTOS: pueden mandarte fotos (tickets/recibos) o audios. Leelos y registrá lo "
+    "que corresponda con las tools (deducí monto, fecha y descripción del contenido). Si "
+    "una foto trae varios ítems o varios tickets, registralos todos. Si algo no se entiende, "
+    "preguntá en vez de inventar.\n"
     "- CATEGORÍAS: son de rutina, podés crearlas sin pedir permiso. Sólo podés usar una categoría "
     "que EXISTA (ver lista abajo); si la que corresponde no está, creala primero (create_category) "
     "y registrá con esa. Las herramientas devuelven category_used: si terminaste en 'Sin "
@@ -325,13 +329,16 @@ def _build_tools(family_id, member_id) -> list:
             create_category, create_categories, create_budget, create_account]
 
 
-async def stream(message: str, member, session_id=None):
+async def stream(message: str, member, session_id=None, media=None):
     """Run one chat message and YIELD events as the tool loop runs — this is the
     streaming spine. `member` is the logged-in user's Record; family_id/member_id
     come from it (the session), never from the message. `session_id` continues a
-    thread (None = new). Events (dicts): {type:start, session_id}, {type:tool,
-    name, args}, {type:tool_done, name, ok}, {type:reply, text, session_id},
-    {type:error, message}. The non-streaming `handle` just drains this."""
+    thread (None = new). `media` is an optional list of {kind, mime, data(bytes)}
+    attachments (images/audio) fed to the model as multimodal parts. Events
+    (dicts): {type:start, session_id}, {type:tool, name, args}, {type:tool_done,
+    name, ok}, {type:reply, text, session_id}, {type:error, message}. The
+    non-streaming `handle` just drains this."""
+    media = media or []
     family_id = member["family_id"]
     member_id = member["member_id"]
     chat_session_id = await _ensure_session(family_id, member_id, session_id, message)
@@ -353,7 +360,21 @@ async def stream(message: str, member, session_id=None):
     history = _SESSIONS.get(sid)
     if history is None:  # cold cache: rebuild from the durable log
         history = await _load_history(chat_session_id)
-    contents = history + [_user_turn(message)]
+
+    # This turn's user message: text + any attachments as multimodal parts.
+    user_parts = [types.Part(text=message)]
+    for m in media:
+        user_parts.append(types.Part.from_bytes(data=m["data"], mime_type=m["mime"]))
+    contents = history + [types.Content(role="user", parts=user_parts)]
+
+    # For the durable history we keep text only (bytes aren't replayed to the
+    # model on follow-ups), but note that attachments were present.
+    note = ""
+    if media:
+        kinds = {m["kind"] for m in media}
+        note = " [adjuntó " + " y ".join(
+            f"{sum(1 for m in media if m['kind'] == k)} {k}" for k in kinds) + "]"
+    stored_user_text = message + note
 
     tool_list = _build_tools(family_id, member_id)
     tool_map = {fn.__name__: fn for fn in tool_list}
@@ -425,16 +446,16 @@ async def stream(message: str, member, session_id=None):
         _log_run(family_id, member_id, chat_session_id, message, reply, model_used,
                  tool_calls, None, p_sum, o_sum, t_sum)
     )
-    _SESSIONS[sid] = (history + [_user_turn(message), _model_turn(reply)])[-_MAX_TURNS:]
+    _SESSIONS[sid] = (history + [_user_turn(stored_user_text), _model_turn(reply)])[-_MAX_TURNS:]
     yield {"type": "reply", "text": reply, "session_id": sid}
 
 
-async def handle(message: str, member, session_id=None) -> tuple[str, str]:
+async def handle(message: str, member, session_id=None, media=None) -> tuple[str, str]:
     """Non-streaming wrapper over `stream` — drains the events and returns the
     final (reply_text, chat_session_id). Kept for any caller that just wants the
     answer (and as the /chat/message fallback)."""
     reply, sid = "(sin respuesta)", None
-    async for ev in stream(message, member, session_id):
+    async for ev in stream(message, member, session_id, media):
         if ev["type"] == "start":
             sid = ev["session_id"]
         elif ev["type"] == "reply":

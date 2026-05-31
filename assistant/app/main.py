@@ -12,7 +12,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import agent, config, db, queries, tools
+from app import agent, config, db, queries, storage, tools
 from app.auth import current_member, router as auth_router
 
 logging.basicConfig(
@@ -141,28 +141,70 @@ async def chat_message(request: Request):
 
 
 @app.post("/chat/stream")
-async def chat_stream(request: Request):
+async def chat_stream(
+    request: Request,
+    message: str = Form(""),
+    session_id: str = Form(""),
+    files: list[UploadFile] = File(default=[]),
+):
     """Streaming version of /chat/message: an SSE feed of the agent's progress
-    (tool calls as they run) ending with the reply. Same identity rule — the
-    member comes from the session, never the body. The client reads this with
-    fetch()+ReadableStream (POST, so not EventSource)."""
+    (tool calls as they run) ending with the reply. Multipart so it can carry
+    attachments (receipt photos, audio). Same identity rule — the member comes
+    from the session, never the body. Limits are enforced HERE too, not just in
+    the client. The client reads this with fetch()+ReadableStream."""
     import json
 
     member = await current_member(request)
     if member is None:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    body = await request.json()
-    text = (body.get("message") or "").strip()
-    if not text:
+
+    text = (message or "").strip()
+    sid_in = (session_id or "").strip() or None
+
+    # Validate + read attachments. Quality-over-quantity caps from config.
+    media: list[dict] = []
+    n_img = n_aud = 0
+    for f in files or []:
+        kind = storage.classify(f.content_type or "")
+        if kind is None:
+            return JSONResponse({"error": f"tipo no permitido: {f.content_type}"}, status_code=400)
+        data = await f.read()
+        if kind == "image":
+            n_img += 1
+            if n_img > config.MAX_IMAGES:
+                return JSONResponse({"error": f"máximo {config.MAX_IMAGES} imágenes"}, status_code=400)
+            if len(data) > config.MAX_IMAGE_BYTES:
+                return JSONResponse({"error": "imagen demasiado grande"}, status_code=400)
+        else:
+            n_aud += 1
+            if n_aud > config.MAX_AUDIOS:
+                return JSONResponse({"error": f"máximo {config.MAX_AUDIOS} audios"}, status_code=400)
+            if len(data) > config.MAX_AUDIO_BYTES:
+                return JSONResponse({"error": "audio demasiado largo"}, status_code=400)
+        media.append({"kind": kind, "mime": storage.base_mime(f.content_type),
+                      "filename": f.filename or "", "data": data})
+
+    if not text and not media:
         return JSONResponse({"error": "empty message"}, status_code=400)
-    session_id = (body.get("session_id") or "").strip() or None
 
     async def events():
+        log = logging.getLogger("chat")
         try:
-            async for ev in agent.stream(text, member, session_id):
+            async for ev in agent.stream(text, member, sid_in, media):
                 yield f"data: {json.dumps(ev)}\n\n"
+                # Once the thread id is known, persist images linked to it
+                # (audio is sent to the model but not stored — per design).
+                if ev.get("type") == "start":
+                    for m in media:
+                        if m["kind"] == "image":
+                            try:
+                                await storage.save_image(
+                                    member["family_id"], member["member_id"],
+                                    ev["session_id"], m["mime"], m["filename"], m["data"])
+                            except Exception:  # noqa: BLE001
+                                log.exception("save_image failed")
         except Exception:  # noqa: BLE001
-            logging.getLogger("chat").exception("agent.stream failed")
+            log.exception("agent.stream failed")
             yield 'data: {"type": "error", "message": "Error interno."}\n\n'
         yield 'data: {"type": "end"}\n\n'
 
@@ -315,6 +357,25 @@ async def manual_marca():
     self-contained reference of the design work, shareable as a clean URL.
     Public on purpose (no login) so it's easy to show."""
     return FileResponse("app/static/manual-marca.html")
+
+
+@app.get("/media/{media_id}")
+async def media_file(request: Request, media_id: str):
+    """Serve a kept attachment — family-scoped, so you can only fetch your own
+    family's media."""
+    member = await current_member(request)
+    if member is None:
+        return RedirectResponse("/login", status_code=303)
+    row = await db.fetchrow(
+        """
+        SELECT storage_path, mime FROM media
+        WHERE media_id = $1::uuid AND family_id = $2 AND deleted_ts IS NULL
+        """,
+        media_id, member["family_id"],
+    )
+    if row is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(storage.abs_path(row["storage_path"]), media_type=row["mime"])
 
 
 @app.get("/health")
