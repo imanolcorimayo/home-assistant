@@ -325,15 +325,18 @@ def _build_tools(family_id, member_id) -> list:
             create_category, create_categories, create_budget, create_account]
 
 
-async def handle(message: str, member, session_id=None) -> tuple[str, str]:
-    """Run one chat message through the agent. `member` is the asyncpg Record of
-    the logged-in user; family_id/member_id are taken from it (the session),
-    never from the message. `session_id` is the chat_session to continue (None =
-    start a new thread). Returns (reply_text, chat_session_id as str)."""
+async def stream(message: str, member, session_id=None):
+    """Run one chat message and YIELD events as the tool loop runs — this is the
+    streaming spine. `member` is the logged-in user's Record; family_id/member_id
+    come from it (the session), never from the message. `session_id` continues a
+    thread (None = new). Events (dicts): {type:start, session_id}, {type:tool,
+    name, args}, {type:tool_done, name, ok}, {type:reply, text, session_id},
+    {type:error, message}. The non-streaming `handle` just drains this."""
     family_id = member["family_id"]
     member_id = member["member_id"]
     chat_session_id = await _ensure_session(family_id, member_id, session_id, message)
     sid = str(chat_session_id)
+    yield {"type": "start", "session_id": sid}
 
     ctx = await context.build_family_context(family_id)
     recent = await tools.recent_transactions(family_id, limit=20, kind="expense")
@@ -384,11 +387,12 @@ async def handle(message: str, member, session_id=None) -> tuple[str, str]:
                 break
 
             # The control point AFC hid: record the model's call turn, then run
-            # each tool ourselves — logging (and later notifying) right here.
+            # each tool ourselves — emitting a live event around each one.
             contents.append(resp.candidates[0].content)
             responses = []
             for c in calls:
                 args = dict(c.args or {})
+                yield {"type": "tool", "name": c.name, "args": args}
                 fn = tool_map.get(c.name)
                 if fn is None:
                     result = {"ok": False, "error": f"herramienta desconocida: {c.name}"}
@@ -398,6 +402,8 @@ async def handle(message: str, member, session_id=None) -> tuple[str, str]:
                     except Exception:  # noqa: BLE001 - surface as a tool error, keep the loop alive
                         log.exception("tool %s failed", c.name)
                         result = {"ok": False, "error": "fallo interno de la herramienta"}
+                ok = result.get("ok", True) if isinstance(result, dict) else True
+                yield {"type": "tool_done", "name": c.name, "ok": bool(ok)}
                 tool_calls.append({"name": c.name, "args": args})
                 responses.append(
                     types.Part.from_function_response(name=c.name, response={"result": result})
@@ -405,16 +411,34 @@ async def handle(message: str, member, session_id=None) -> tuple[str, str]:
             contents.append(types.Content(role="user", parts=responses))
         else:
             log.warning("agent hit max iterations (%s)", _MAX_ITERS)
-    except BaseException as exc:  # noqa: BLE001 - log the failed run, then re-raise
+    except BaseException as exc:  # noqa: BLE001 - log the failed run, then surface to the client
+        log.exception("agent stream failed")
         asyncio.create_task(
             _log_run(family_id, member_id, chat_session_id, message, None, model_used,
                      tool_calls, str(exc), p_sum, o_sum, t_sum)
         )
-        raise
+        yield {"type": "error",
+               "message": "Hubo un problema procesando el mensaje. Probá de nuevo."}
+        return
 
     asyncio.create_task(
         _log_run(family_id, member_id, chat_session_id, message, reply, model_used,
                  tool_calls, None, p_sum, o_sum, t_sum)
     )
     _SESSIONS[sid] = (history + [_user_turn(message), _model_turn(reply)])[-_MAX_TURNS:]
+    yield {"type": "reply", "text": reply, "session_id": sid}
+
+
+async def handle(message: str, member, session_id=None) -> tuple[str, str]:
+    """Non-streaming wrapper over `stream` — drains the events and returns the
+    final (reply_text, chat_session_id). Kept for any caller that just wants the
+    answer (and as the /chat/message fallback)."""
+    reply, sid = "(sin respuesta)", None
+    async for ev in stream(message, member, session_id):
+        if ev["type"] == "start":
+            sid = ev["session_id"]
+        elif ev["type"] == "reply":
+            reply, sid = ev["text"], ev.get("session_id", sid)
+        elif ev["type"] == "error":
+            reply = ev["message"]
     return reply, sid

@@ -13,7 +13,12 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -133,6 +138,40 @@ async def chat_message(request: Request):
             status_code=200,
         )
     return JSONResponse({"reply": reply, "session_id": session_id})
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: Request):
+    """Streaming version of /chat/message: an SSE feed of the agent's progress
+    (tool calls as they run) ending with the reply. Same identity rule — the
+    member comes from the session, never the body. The client reads this with
+    fetch()+ReadableStream (POST, so not EventSource)."""
+    import json
+
+    member = await current_member(request)
+    if member is None:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    text = (body.get("message") or "").strip()
+    if not text:
+        return JSONResponse({"error": "empty message"}, status_code=400)
+    session_id = (body.get("session_id") or "").strip() or None
+
+    async def events():
+        try:
+            async for ev in agent.stream(text, member, session_id):
+                yield f"data: {json.dumps(ev)}\n\n"
+        except Exception:  # noqa: BLE001
+            logging.getLogger("chat").exception("agent.stream failed")
+            yield 'data: {"type": "error", "message": "Error interno."}\n\n'
+        yield 'data: {"type": "end"}\n\n'
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        # Disable proxy buffering so events flush immediately (Cloudflare/nginx).
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/chat/sessions")
