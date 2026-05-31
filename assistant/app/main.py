@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import config, db
+from app import agent, config, db
 from app.auth import current_member, router as auth_router
 
 logging.basicConfig(
@@ -61,6 +61,38 @@ async def login(request: Request):
     if await current_member(request) is not None:
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/chat")
+async def chat_page(request: Request):
+    member = await current_member(request)
+    if member is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        "chat.html", {"request": request, "member": member}
+    )
+
+
+@app.post("/chat/message")
+async def chat_message(request: Request):
+    """The one endpoint the chat UI talks to. family_id/member_id come from the
+    session inside agent.handle — never from the request body."""
+    member = await current_member(request)
+    if member is None:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    text = (body.get("message") or "").strip()
+    if not text:
+        return JSONResponse({"error": "empty message"}, status_code=400)
+    try:
+        reply = await agent.handle(text, member)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("chat").exception("agent.handle failed")
+        return JSONResponse(
+            {"reply": "Hubo un problema procesando el mensaje. Probá de nuevo."},
+            status_code=200,
+        )
+    return JSONResponse({"reply": reply})
 
 
 @app.get("/health")

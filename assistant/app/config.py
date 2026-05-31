@@ -18,3 +18,14 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 # Signs the session cookie (Starlette SessionMiddleware ≈ PHP $_SESSION). Any
 # long random string; rotating it logs everyone out. MUST be set in prod.
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-insecure-change-me")
+
+# Gemini (the agent's model). Same key household uses. Models are tried in
+# order; on a 429 (daily free-tier quota) or 5xx we rotate to the next.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+AGENT_MODELS = [
+    m.strip()
+    for m in os.environ.get(
+        "AGENT_MODELS", "gemini-2.5-flash,gemini-2.5-flash-lite"
+    ).split(",")
+    if m.strip()
+]
