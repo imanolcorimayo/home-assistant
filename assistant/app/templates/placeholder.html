@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% from "macros.html" import page_header %}
+{% block title %}{{ title }} · assistant{% endblock %}
+{% block content %}
+  {% call page_header(title) %}{% endcall %}
+  <div class="rounded-xl border border-line bg-surface p-6">
+    <p class="text-muted">{{ note or "Próximamente." }}</p>
+  </div>
+{% endblock %}

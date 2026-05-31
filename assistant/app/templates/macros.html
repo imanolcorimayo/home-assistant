@@ -1,0 +1,49 @@
+{# Reusable UI primitives. Import in any template:
+   {% from "macros.html" import icon, pager, page_header %} #}
+
+{# Inline Lucide-style SVG icons. Self-hosted (no CDN/JS). #}
+{% macro icon(name, cls="w-5 h-5") -%}
+<svg class="{{ cls }}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{%- if name == "home" %}<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>
+{%- elif name == "receipt" %}<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/>
+{%- elif name == "tag" %}<path d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.41l8.7 8.71a2.43 2.43 0 0 0 3.42 0l6.58-6.59a2.43 2.43 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>
+{%- elif name == "wallet" %}<path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>
+{%- elif name == "settings" %}<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
+{%- elif name == "search" %}<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+{%- elif name == "chevron-left" %}<path d="m15 18-6-6 6-6"/>
+{%- elif name == "chevron-right" %}<path d="m9 18 6-6-6-6"/>
+{%- elif name == "plus" %}<path d="M5 12h14"/><path d="M12 5v14"/>
+{%- elif name == "chart" %}<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>
+{%- elif name == "users" %}<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+{%- elif name == "activity" %}<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+{%- endif -%}
+</svg>
+{%- endmacro %}
+
+{# Page header: title on the left, optional actions slot on the right. #}
+{% macro page_header(title, subtitle="") -%}
+<div class="flex items-end justify-between gap-4 mb-5">
+  <div>
+    <h1 class="text-xl font-semibold">{{ title }}</h1>
+    {% if subtitle %}<p class="text-sm text-muted mt-0.5">{{ subtitle }}</p>{% endif %}
+  </div>
+  {{ caller() if caller else "" }}
+</div>
+{%- endmacro %}
+
+{# Prev / page-of / next pager. Preserves the search query `q`. #}
+{% macro pager(page, total_pages, q="") -%}
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between mt-4 text-sm">
+  {% set qs = ("&q=" ~ (q | urlencode)) if q else "" %}
+  <a class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-line
+            {{ 'pointer-events-none opacity-40' if page <= 1 else 'hover:bg-bg' }}"
+     href="?page={{ page - 1 }}{{ qs }}">{{ icon('chevron-left', 'w-4 h-4') }} Anterior</a>
+  <span class="text-muted">Página {{ page }} de {{ total_pages }}</span>
+  <a class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-line
+            {{ 'pointer-events-none opacity-40' if page >= total_pages else 'hover:bg-bg' }}"
+     href="?page={{ page + 1 }}{{ qs }}">Siguiente {{ icon('chevron-right', 'w-4 h-4') }}</a>
+</div>
+{% endif %}
+{%- endmacro %}

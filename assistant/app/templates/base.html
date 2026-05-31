@@ -1,38 +1,112 @@
 <!doctype html>
 <html lang="es">
+{% from "macros.html" import icon %}
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}assistant{% endblock %}</title>
-  {# Minimal styling for now — the full Tailwind shell lands with the real
-     pages (#27/#28). Just enough to not look broken. #}
-  <style>
-    :root { color-scheme: light dark; }
-    * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      background: #0f172a; color: #e2e8f0;
-    }
-    .card {
-      background: #1e293b; padding: 2.5rem; border-radius: 1rem;
-      width: min(92vw, 26rem); box-shadow: 0 10px 40px rgba(0,0,0,.35);
-    }
-    h1 { margin: 0 0 .5rem; font-size: 1.5rem; }
-    p  { color: #94a3b8; line-height: 1.5; }
-    .btn {
-      display: inline-flex; align-items: center; gap: .5rem;
-      background: #fff; color: #1e293b; text-decoration: none;
-      padding: .7rem 1.1rem; border-radius: .6rem; font-weight: 600;
-      margin-top: 1rem;
-    }
-    .muted { font-size: .85rem; }
-    a.link { color: #93c5fd; }
-  </style>
+  <link rel="stylesheet" href="/static/style.css?v={{ static_ver }}" />
 </head>
-<body>
-  <main class="card">
-    {% block content %}{% endblock %}
-  </main>
+{# Nav shared by the desktop sidebar and the mobile bottom bar. #}
+{% set nav = [
+  ("/",             "Inicio",        "home"),
+  ("/movimientos",  "Movimientos",   "receipt"),
+  ("/configuracion","Configuración", "settings"),
+  ("/actividad",    "Actividad",     "activity"),
+] %}
+{% set path = request.url.path %}
+<body class="min-h-screen bg-bg text-ink font-sans antialiased">
+  <div class="flex min-h-screen">
+
+    {# Desktop sidebar — hidden on mobile. #}
+    <aside class="hidden md:flex md:flex-col w-60 shrink-0 bg-ink text-white">
+      <div class="px-5 h-14 flex items-center font-bold tracking-wide border-b border-white/10">
+        assistant
+      </div>
+      <nav class="flex-1 p-3 space-y-1">
+        {% for href, label, ic in nav %}
+          <a href="{{ href }}"
+             class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
+                    {% if path == href %}bg-white/15 text-white{% else %}text-slate-300 hover:bg-white/10 hover:text-white{% endif %}">
+            {{ icon(ic, "w-[18px] h-[18px]") }}{{ label }}
+          </a>
+        {% endfor %}
+      </nav>
+      <div class="p-3 border-t border-white/10 text-xs text-slate-400">
+        {{ member["full_name"] }}<br />
+        <a href="/logout" class="text-slate-300 hover:text-white">Cerrar sesión</a>
+      </div>
+    </aside>
+
+    <div class="flex-1 flex flex-col min-w-0">
+      {# Slim topbar — brand on mobile, page actions per page. #}
+      <header class="sticky top-0 z-10 flex items-center justify-between px-4 md:px-8 h-14 bg-surface/90 backdrop-blur border-b border-line">
+        <div class="font-semibold md:hidden">assistant</div>
+        <div class="hidden md:block"></div>
+      </header>
+
+      {# Centered, width-capped content. Bottom pad clears the mobile bar. #}
+      <main class="flex-1 w-full max-w-5xl mx-auto px-4 md:px-8 py-6 pb-28 md:pb-8">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  {# Mobile bottom bar — hidden on desktop. #}
+  <nav class="md:hidden fixed bottom-0 inset-x-0 z-20 bg-ink text-white grid grid-cols-4 border-t border-white/10">
+    {% for href, label, ic in nav %}
+      <a href="{{ href }}"
+         class="flex flex-col items-center gap-0.5 py-2 text-[10px]
+                {% if path == href %}text-white{% else %}text-slate-400{% endif %}">
+        {{ icon(ic, "w-5 h-5") }}{{ label }}
+      </a>
+    {% endfor %}
+  </nav>
+
+  {# ── Global chat: a floating launcher + an expandable modal, on every page.
+       The chat is never a dedicated page — this overlay is it. ───────────── #}
+  <button id="chat-fab"
+          class="fixed z-30 bottom-20 right-4 md:bottom-6 md:right-6 inline-flex items-center gap-2
+                 rounded-full bg-ink text-white shadow-lg px-4 py-3 hover:bg-ink/90"
+          aria-label="Abrir chat">
+    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+    <span class="text-sm font-medium hidden sm:inline">Chat</span>
+  </button>
+
+  <div id="chat-modal"
+       class="hidden fixed z-40 inset-0 md:inset-auto md:bottom-6 md:right-6
+              md:w-[420px] md:h-[640px] md:max-h-[85vh]"
+       data-name="{{ member['full_name'].split(' ')[0] }}">
+    <div id="chat-panel"
+         class="flex flex-col h-full w-full bg-surface md:rounded-2xl shadow-2xl border border-line overflow-hidden">
+      <header class="flex items-center justify-between px-4 h-12 bg-ink text-white shrink-0">
+        <span class="font-medium text-sm">Asistente</span>
+        <div class="flex items-center gap-1">
+          <button id="chat-expand" class="p-1.5 rounded hover:bg-white/15" aria-label="Expandir" title="Expandir">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+          </button>
+          <button id="chat-close" class="p-1.5 rounded hover:bg-white/15" aria-label="Cerrar" title="Cerrar">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      </header>
+      <div id="chat-log" class="flex-1 overflow-y-auto p-3 flex flex-col gap-2 bg-bg"></div>
+      <form id="chat-form" class="flex gap-2 p-3 border-t border-line bg-surface shrink-0">
+        <textarea id="chat-input" rows="1" placeholder="Escribí un mensaje..." autocomplete="off"
+                  class="flex-1 resize-none rounded-lg border border-line px-3 py-2 text-sm
+                         focus:outline-none focus:ring-2 focus:ring-ink/20"></textarea>
+        <button type="submit" id="chat-send"
+                class="rounded-lg bg-ink text-white px-4 text-sm font-medium hover:bg-ink/90 disabled:opacity-50">
+          Enviar
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v={{ static_ver }}"></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

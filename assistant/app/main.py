@@ -9,10 +9,12 @@ Raw SQL via app.db — no ORM. Server-rendered with Jinja2.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -39,7 +41,13 @@ app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET)
 
 app.include_router(auth_router)
 
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
 templates = Jinja2Templates(directory="app/templates")
+
+# Auto cache-bust: ?v=<style.css mtime>, bumped whenever the CSS is rebuilt.
+_CSS = "app/static/style.css"
+templates.env.globals["static_ver"] = int(os.path.getmtime(_CSS)) if os.path.exists(_CSS) else 0
 
 
 @app.get("/")
@@ -63,13 +71,26 @@ async def login(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 
-@app.get("/chat")
-async def chat_page(request: Request):
+# Display pages — placeholders for now; the shell + global chat work today, the
+# content lands in later steps (dashboard, movimientos list, config CRUD, sessions).
+_PAGES = {
+    "/movimientos":   ("Movimientos", "El listado de transacciones con búsqueda y edición llega pronto."),
+    "/configuracion": ("Configuración", "Categorías, cuentas y presupuestos llegan pronto."),
+    "/actividad":     ("Actividad", "Tus sesiones de chat, uso de tokens y herramientas llegan pronto."),
+}
+
+
+@app.get("/movimientos")
+@app.get("/configuracion")
+@app.get("/actividad")
+async def page(request: Request):
     member = await current_member(request)
     if member is None:
         return RedirectResponse("/login", status_code=303)
+    title, note = _PAGES[request.url.path]
     return templates.TemplateResponse(
-        "chat.html", {"request": request, "member": member}
+        "placeholder.html",
+        {"request": request, "member": member, "title": title, "note": note},
     )
 
 
